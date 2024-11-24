@@ -48,7 +48,7 @@ SPECIES_XC: list[str] = [
     'Chordeiles nacunda',
     'Nyctipolus nigrescens', 
     'Nyctidromus albicollis',
-    'Hydropsalis climacocerca',
+    'Hydropsalis climacocerca'
 ]      
 # Xeno-Canto searching parameters
 PARAMS_XC: list[str] = [         

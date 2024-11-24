@@ -163,6 +163,7 @@ class XenoCanto():
                 
         # Rearrange index to be sure to have unique and increasing index
         df.reset_index(drop=True, inplace=True)
+        
         # Create a categories column
         df["categories"] = df.gen + " " + df.sp
         # Reorder columns to make 'categories' the second column
@@ -197,19 +198,21 @@ class XenoCanto():
                 sp.append(name.rpartition(' ')[2])
 
             # Add the genus and the species as query parameters
-            # Create empty dataframe
-            self.df = pd.DataFrame() 
-            self.df[0] = gen
-            self.df[1] = sp
+            df_query = pd.DataFrame() # create empty dataframe
+            df_query[0] = gen
+            df_query[1] = sp
 
             # Add the other parameters
             if self.params_xc is not None:
                 idx = 2
                 for param in self.params_xc:
-                    self.df[idx] = param
+                    df_query[idx] = param
                     idx += 1
             
-            for _, row in self.df.iterrows():
+            # Create empty dataframe
+            self.df = pd.DataFrame() 
+                     
+            for _, row in df_query.iterrows():
                 # Convert parameters to list
                 self.params_xc = row.tolist()
                 # Request data from Xeno-Canto
