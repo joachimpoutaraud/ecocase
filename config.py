@@ -11,22 +11,55 @@ RANDOM_SEED: int = 2024         # Fixed random seed
 #########################
 
 # Number of audio files to download for each species
-NUM_FILES: int = 2           
-     
-# Xeno-Canto scientific species (e.g. ['Columba palumbus','Fringilla coelebs']).
-SPECIES_XC = None # if None, species will only be requested according to the Xeno-Canto searching parameters.
-         
-# Xeno-Canto searching parameters, see more here: https://www.xeno-canto.org/help/search
-PARAMS_XC: list[str] = [              
+NUM_FILES: int = 25           
+# Xeno-Canto scientific species (e.g. ['Columba palumbus','Fringilla coelebs']). If None, species will only be requested according to the Xeno-Canto searching parameters
+SPECIES_XC: list[str] = [
+    # TINAMOUS
+    'Tinamus major',
+    'Crypturellus brevirostris',
+    'Crypturellus soui',
+    'Crypturellus cinereus',
+    'Crypturellus variegatus',
+    # POTOOS
+    'Nyctibius grandis',
+    'Nyctibius griseus',
+    'Nyctibius bracteatus',
+    'Nyctibius aethereus',
+    'Nyctibius leucopterus', 
+    # FALCONS
+    'Micrastur ruficollis',
+    'Micrastur gilvicollis',
+    'Micrastur mirandollei',
+    'Micrastur semitorquatus', 
+    # OWLS
+    'Megascops roraimae',
+    'Megascops watsonii', 
+    'Lophostrix cristata',
+    'Pulsatrix perspicillata',
+    'Strix virgata',
+    'Strix huhula',
+    'Glaucidium hardyi',
+    # NIGHTJARS
+    'Lurocalis semitorquatus',
+    'Hydropsalis maculicaudus',
+    'Hydropsalis cayennensis',
+    'Nyctiprogne leucopyga',
+    'Chordeiles acutipennis',
+    'Chordeiles nacunda',
+    'Nyctipolus nigrescens', 
+    'Nyctidromus albicollis',
+    'Hydropsalis climacocerca',
+]      
+# Xeno-Canto searching parameters
+PARAMS_XC: list[str] = [         
+    # More information here:    https://www.xeno-canto.org/help/search     
     'grp:birds',                # Group to which the species belongs (birds, grasshoppers, bats) 
     'type:song',                # Type of the bird sound
-    'len:10-20',                # Length of the recording in seconds
-    'q:"A"',                   # Quality rating for the recording
-    # 'cnt:norway',
-    # 'rmk:rødvinge2024'
-    # 'area:europe',
+    'len:10-60',                # Length of the recording in seconds
+    # 'q:">C"',                   # Quality rating for the recording
+    'area:america',             # Continental area: africa, america, asia, australia, europe
     # Radius search can be easily made using bboxfinder.com (coordinate format:"Lat / Lng" + draw a circle with radius ~ 1000km)
-    'box:-4.741823,-61.623202,12.972096,-43.863127', # Geographical bounding box (min_lat, min_lon, max_lat, max_lon)
+    # 'box:-4.741823,-61.623202,12.972096,-43.863127', # Geographical bounding box (min_lat, min_lon, max_lat, max_lon)
 ] 
 
 ##########################
@@ -65,7 +98,7 @@ SIG_FMIN: int = 0
 SIG_FMAX: int = 15000
 # Settings for bandpass filter
 BANDPASS_FMIN: int = 250
-BANDPASS_FMAX: int = 12000
+BANDPASS_FMAX: int = 8500
 
 #########################
 #  CLUSTERING SETTINGS  #
@@ -95,7 +128,7 @@ LOCATION_FILTER_THRESHOLD: float = 0.03
 # If None or empty file, no custom species list will be used
 # Note: Entries in this list have to match entries from the LABELS_FILE
 # We use the 2021 eBird taxonomy for species names (Clements list)
-CODES_FILE: str = "eBird_taxonomy_codes_2021E.json"
+CODES_FILE: str = "checkpoints/eBird_taxonomy_codes_2021E.json"
 SPECIES_LIST_FILE: str = "example/species_list.txt"
 
 # File input path and output path for selection tables
@@ -215,8 +248,8 @@ AUTOTUNE_EXECUTIONS_PER_TRIAL: int = 1
 BINARY_CLASSIFICATION: bool = False
 
 # If a model for a multi-label setting is trained.
-# This value will automatically be set, if subfolders in the input direcotry are named with multiple classes separated by commas.
-MULTI_LABEL: bool = False
+# This value will automatically be set, if subfolders in the input directory are named with multiple classes separated by commas.
+MULTI_LABEL: bool = True
 
 #####################
 # MISC RUNTIME VARS #

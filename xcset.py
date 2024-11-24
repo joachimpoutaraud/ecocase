@@ -61,7 +61,7 @@ class XenoCanto():
     def query(self):
         
         # Create empty dataframe
-        self.df = pd.DataFrame() 
+        df = pd.DataFrame() 
         
         numPages = 1
         page = 1
@@ -80,97 +80,97 @@ class XenoCanto():
             jsondata = json.loads(jsonPage.read().decode('utf-8'))
             # check number of pages
             numPages = jsondata['numPages']
-            # Concatenate pandas dataframe of records & convert to .csv file
-            self.df = pd.concat([self.df, pd.DataFrame(jsondata['recordings'])], ignore_index=True) 
+            # Concatenate pandas dataframe of records & convert to .csv file            
+            df = pd.concat([df, pd.DataFrame(jsondata['recordings'])], ignore_index=True) 
             # increment the current page
             page += 1
                     
         # test if the dataset is not empty
-        if len(self.df) > 0:
+        if len(df) > 0:
             # convert latitude and longitude coordinates into float
             try:
-                self.df['lat'] = self.df['lat'].astype(float)
-                self.df['lng'] = self.df['lng'].astype(float)
+                df['lat'] = df['lat'].astype(float)
+                df['lng'] = df['lng'].astype(float)
             except ValueError:
                 pass
             
             # rearrange index to be sure to have unique and increasing index
-            self.df.reset_index(drop=True, inplace=True)
+            df.reset_index(drop=True, inplace=True)
             
             # the format of length is not correct (missing 0 before 0:45 => 00:45)
             # Correct the format of length for length shorten than 9:59 (4 characters) by adding a 0
-            self.df['length'].where(~(self.df.length.str.len()==4), 
-                                        other='0'+ self.df[self.df.length.str.len()==4].length, 
+            df['length'].where(~(df.length.str.len()==4), 
+                                        other='0'+ df[df.length.str.len()==4].length, 
                                         inplace=True) 
             
             if self.format_time:
                 # rearrange index to be sure to have unique and increasing index
-                self.df.reset_index(drop=True, inplace=True)
+                df.reset_index(drop=True, inplace=True)
                 
                 # the format of time is not always correct
                 # replace . by :
-                self.df['time'].replace(to_replace = '[.]', value=':', regex= True)
-                self.df['time'].replace(to_replace = '[ ] ', value='', regex= True)
+                df['time'].replace(to_replace = '[.]', value=':', regex= True)
+                df['time'].replace(to_replace = '[ ] ', value='', regex= True)
                 
                 # drop rows where there is no valid time information that can be corrected
-                self.df = self.df[(self.df.time.str.match('^(0[0-9]|1[0-9]|2[0-3])[:]([0-5][0-9])$')) | 
-                                        (self.df.time.str.match('^([0-9])[:]([0-5][0-9])$'))]
+                df = df[(df.time.str.match('^(0[0-9]|1[0-9]|2[0-3])[:]([0-5][0-9])$')) | 
+                                        (df.time.str.match('^([0-9])[:]([0-5][0-9])$'))]
                 
                 # Correct the format of time when 0 is missing (missing 0 before 0:45 => 00:45) by adding a 0
-                self.df['time'][self.df.time.str.match('^([0-9])[:]([0-5][0-9])$')] = '0' + self.df[self.df.time.str.match('^([0-9])[:]([0-5][0-9])$')].time
+                df['time'][df.time.str.match('^([0-9])[:]([0-5][0-9])$')] = '0' + df[df.time.str.match('^([0-9])[:]([0-5][0-9])$')].time
 
                 if self.verbose:
-                    print("Keeped metadata for", len(self.df), "files after formating time")
+                    print("Keeped metadata for", len(df), "files after formating time")
                 
             if self.format_date:
                 # rearrange index to be sure to have unique and increasing index
-                self.df.reset_index(drop=True, inplace=True)
+                df.reset_index(drop=True, inplace=True)
                 # drop rows where there is no valid date information
-                self.df = self.df[self.df.date.str.match(r'^(20[0-9][0-9]|19[0-9][0-9])-(0[1-9]|1[0-2])-([1-9]|1[0-9]|2[0-9]|3[0-1])$')]
+                df = df[df.date.str.match(r'^(20[0-9][0-9]|19[0-9][0-9])-(0[1-9]|1[0-2])-([1-9]|1[0-9]|2[0-9]|3[0-1])$')]
                 
                 if self.verbose:
-                    print("Keeped metadata for", len(self.df), "files after formating date")
+                    print("Keeped metadata for", len(df), "files after formating date")
             
             if (self.format_time == True) and (self.format_date == True) :         
                 # add a column with the week number
-                self.df['week'] = pd.to_datetime(self.df['date']).dt.isocalendar()['week'] # type: ignore
+                df['week'] = pd.to_datetime(df['date']).dt.isocalendar()['week'] # type: ignore
                 # add a column with datetime in DateTime format
-                self.df['datetime'] =  pd.to_datetime(self.df['time']+' '+ self.df['date'], format="%H:%M %Y-%m-%d")
+                df['datetime'] =  pd.to_datetime(df['time']+' '+ df['date'], format="%H:%M %Y-%m-%d")
 
-        if len(self.df) > 0:    
+        if len(df) > 0:    
             if cfg.NUM_FILES is not None:
-                if cfg.NUM_FILES > len(self.df):
+                if cfg.NUM_FILES > len(df):
                     if self.verbose:
-                        print(f"Only {len(self.df)} audio files are available.")
+                        print(f"Only {len(df)} audio files are available.")
                 else:
                     # Test if the number of files is greater than the maximum number of resquested files for each species 
-                    for i in self.df.en.value_counts()[self.df.en.value_counts() > cfg.NUM_FILES].index.to_list():
-                        rows = self.df[self.df.en == i]
+                    for i in df.en.value_counts()[df.en.value_counts() > cfg.NUM_FILES].index.to_list():
+                        rows = df[df.en == i]
                         to_drop = rows.sample(n=len(rows) - cfg.NUM_FILES, random_state=cfg.RANDOM_SEED).index.to_list()
-                        self.df = self.df.drop(to_drop)
+                        df = df.drop(to_drop)
                     # Test if the number of files is smaller than the minimum number of resquested files for each species 
-                    for i in self.df.en.value_counts()[self.df.en.value_counts() < cfg.NUM_FILES].index.to_list():
-                        to_drop = self.df[self.df.en == i].index.to_list()
-                        self.df = self.df.drop(to_drop)
-                
-        # Rearrange index to be sure to have unique and increasing index
-        self.df.reset_index(drop=True, inplace=True)
-        # Create a categories column
-        self.df["categories"] = self.df.gen + " " + self.df.sp
-        # Reorder columns to make 'categories' the second column
-        cols = self.df.columns.tolist()
-        cols.insert(1, cols.pop(cols.index('categories')))
-        self.df = self.df[cols]
-        
+                    for i in df.en.value_counts()[df.en.value_counts() < cfg.NUM_FILES].index.to_list():
+                        to_drop = df[df.en == i].index.to_list()
+                        df = df.drop(to_drop)
+                        
         # Convert length column to seconds
         def convert_to_seconds(length_str):
             length = time.strptime(length_str, '%M:%S')
             length_seconds = int(datetime.timedelta(hours=length.tm_hour, minutes=length.tm_min, seconds=length.tm_sec).total_seconds())
             return length_seconds
         
-        self.df['length'] = self.df['length'].apply(convert_to_seconds)                 
+        df['length'] = df['length'].apply(convert_to_seconds) 
+                
+        # Rearrange index to be sure to have unique and increasing index
+        df.reset_index(drop=True, inplace=True)
+        # Create a categories column
+        df["categories"] = df.gen + " " + df.sp
+        # Reorder columns to make 'categories' the second column
+        cols = df.columns.tolist()
+        cols.insert(1, cols.pop(cols.index('categories')))
+        df = df[cols]                
 
-        return self.df
+        return df
     
 
     def dataset(self, num_files=None, species_xc=None, params_xc=None, csv_filename=None):
@@ -187,8 +187,7 @@ class XenoCanto():
             self.params_xc = params_xc
 
         if self.species_xc is None:
-            self.df = self.query()
-            
+            self.df = self.query()     
         else:        
             # Separate the genus and the species from the scientific name
             gen, sp = [], []
@@ -198,18 +197,19 @@ class XenoCanto():
                 sp.append(name.rpartition(' ')[2])
 
             # Add the genus and the species as query parameters
-            df_query = pd.DataFrame()
-            df_query[0] = gen
-            df_query[1] = sp
+            # Create empty dataframe
+            self.df = pd.DataFrame() 
+            self.df[0] = gen
+            self.df[1] = sp
 
             # Add the other parameters
             if self.params_xc is not None:
                 idx = 2
                 for param in self.params_xc:
-                    df_query[idx] = param
+                    self.df[idx] = param
                     idx += 1
             
-            for _, row in df_query.iterrows():
+            for _, row in self.df.iterrows():
                 # Convert parameters to list
                 self.params_xc = row.tolist()
                 # Request data from Xeno-Canto
