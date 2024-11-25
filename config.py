@@ -11,55 +11,19 @@ RANDOM_SEED: int = 2024         # Fixed random seed
 #########################
 
 # Number of audio files to download for each species
-NUM_FILES: int = 25           
+NUM_FILES: int = 20          
 # Xeno-Canto scientific species (e.g. ['Columba palumbus','Fringilla coelebs']). If None, species will only be requested according to the Xeno-Canto searching parameters
-SPECIES_XC: list[str] = [
-    # TINAMOUS
-    'Tinamus major',
-    'Crypturellus brevirostris',
-    'Crypturellus soui',
-    'Crypturellus cinereus',
-    'Crypturellus variegatus',
-    # POTOOS
-    'Nyctibius grandis',
-    'Nyctibius griseus',
-    'Nyctibius bracteatus',
-    'Nyctibius aethereus',
-    'Nyctibius leucopterus', 
-    # FALCONS
-    'Micrastur ruficollis',
-    'Micrastur gilvicollis',
-    'Micrastur mirandollei',
-    'Micrastur semitorquatus', 
-    # OWLS
-    'Megascops roraimae',
-    'Megascops watsonii', 
-    'Lophostrix cristata',
-    'Pulsatrix perspicillata',
-    'Strix virgata',
-    'Strix huhula',
-    'Glaucidium hardyi',
-    # NIGHTJARS
-    'Lurocalis semitorquatus',
-    'Hydropsalis maculicaudus',
-    'Hydropsalis cayennensis',
-    'Nyctiprogne leucopyga',
-    'Chordeiles acutipennis',
-    'Chordeiles nacunda',
-    'Nyctipolus nigrescens', 
-    'Nyctidromus albicollis',
-    'Hydropsalis climacocerca'
-]      
+SPECIES_XC = None    
 # Xeno-Canto searching parameters
 PARAMS_XC: list[str] = [         
     # More information here:    https://www.xeno-canto.org/help/search     
     'grp:birds',                # Group to which the species belongs (birds, grasshoppers, bats) 
     'type:song',                # Type of the bird sound
     'len:10-60',                # Length of the recording in seconds
-    # 'q:">C"',                   # Quality rating for the recording
+    'q:">C"',                   # Quality rating for the recording
     'area:america',             # Continental area: africa, america, asia, australia, europe
+    'box:-9.889955,-67.684883,8.143715,-49.649101', # Geographical bounding box (min_lat, min_lon, max_lat, max_lon)
     # Radius search can be easily made using bboxfinder.com (coordinate format:"Lat / Lng" + draw a circle with radius ~ 1000km)
-    # 'box:-4.741823,-61.623202,12.972096,-43.863127', # Geographical bounding box (min_lat, min_lon, max_lat, max_lon)
 ] 
 
 ##########################
@@ -208,7 +172,7 @@ TRAIN_BATCH_SIZE: int = 32
 TRAIN_VAL_SPLIT: float = 0.2
 
 # Learning rate for training
-TRAIN_LEARNING_RATE: float = 0.0001
+TRAIN_LEARNING_RATE: float = 0.001
 
 # Number of hidden units in custom classifier
 # If >0, a two-layer classifier will be trained

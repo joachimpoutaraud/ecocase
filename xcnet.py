@@ -51,12 +51,13 @@ class XCNet(XenoCanto, BirdNET):
             cfg.LABELS_FILE = f"{filename}_Labels.txt"
         
         
-    def fine_tuning(self, dataset=None, model_output_path=cfg.CUSTOM_CLASSIFIER, csv_filename=None):
+    def training(self, dataset=None, train_data_path=None, model_output_path=cfg.CUSTOM_CLASSIFIER, csv_filename=None):
         """
-        Fine-tune BirdNET model with pseudo-labeled data requested from the Xeno-Canto database.
+        Training custom classifier on top of BirdNET model with pseudo-labeled data requested from the Xeno-Canto database.
         
         Args:
             dataset (str, optional): Path to dataset. This could be the path to a pandas DataFrame or audio recordings folder. Defaults to None (which corresponds to self.df). 
+            train_data_path (str, optional): Path to training dataset of labeled audio files, organized in folders by species (we use folder names as labels). This also works for non-bird species, as long as you have a dataset of labeled audio files. 
             model_output_path (str, optional): Path to the fine-tuned model. Default is cfg.CUSTOM_CLASSIFIER.
             csv_filename (str, optional): The name of the csv file to save the dataset. Default is None.
             
@@ -79,25 +80,30 @@ class XCNet(XenoCanto, BirdNET):
             else:
                 self.df = dataset
                 
-        # Extract embeddings from BirdNET
-        self.df = self.embeddings(csv_filename=csv_filename)
+        if train_data_path is not None:
+            # Update training data path and train model
+            cfg.TRAIN_DATA_PATH = train_data_path
         
-        # Find cluster and assign pseudo-labels
-        c = cfg.getConfig() # get initial configuration dict
-        # We use specific clustering settings for building pseudo-labeled dataset
-        cfg.MIN_PTS, cfg.EPS, cfg.METHOD, cfg.KEEP = 3, 'auto', 'DBSCAN', 'BIGGEST' 
-        self.df = self.pseudo_labeling(csv_filename=csv_filename) 
-        # Reset config file with initial values
-        cfg.MIN_PTS, cfg.EPS, cfg.METHOD, cfg.KEEP = c['MIN_PTS'], c['EPS'], c['METHOD'], c['KEEP'] 
-        
-        # Download dataset to disk
-        from utils import download_audio_files
-        download_audio_files(self.df, self.save_path, self.verbose, csv_filename)
+        else: # we build a pseudo-labeled dataset with density-based clustering method       
+            # Extract embeddings from BirdNET
+            self.df = self.embeddings(csv_filename=csv_filename)
+            
+            # Find cluster and assign pseudo-labels
+            c = cfg.getConfig() # get initial configuration dict
+            # We use specific clustering settings for building pseudo-labeled dataset
+            cfg.MIN_PTS, cfg.EPS, cfg.METHOD, cfg.KEEP = 3, 'auto', 'DBSCAN', 'BIGGEST' 
+            self.df = self.pseudo_labeling(csv_filename=csv_filename) 
+            # Reset config file with initial values
+            cfg.MIN_PTS, cfg.EPS, cfg.METHOD, cfg.KEEP = c['MIN_PTS'], c['EPS'], c['METHOD'], c['KEEP'] 
+            
+            # Download dataset to disk
+            from utils import download_audio_files
+            download_audio_files(self.df, self.save_path, self.verbose, csv_filename)
         
         if self.verbose:
-            print('\n====================== FINE-TUNING THE MODEL ======================\n')
+            print('\n====================== TRAINING THE MODEL ======================\n')
         
-        # Fine-tune BirdNET with pseudo-labeled data and save custom classifier
+        # Train model on top of BirdNET with pseudo-labeled data and save custom classifier
         history = self.trainModel(custom_classifier_path=model_output_path) # trainModel() function is inherited from BirdNET() class
         filename, _ = os.path.splitext(model_output_path)
         
@@ -361,8 +367,8 @@ if __name__ == "__main__":
     
     # Build Xeno-Canto dataset with Xeno-Canto parameters from the config file (config.py)
     xcnet.dataset() 
-    # Fine-tune BirdNET with Xeno-Canto dataset and save custom classifier to disk
-    xcnet.fine_tuning(model_output_path="checkpoints/custom/XCNet.tflite", csv_filename='train_data.csv')
+    # Train model on top of BirdNET with Xeno-Canto dataset and save custom classifier to disk
+    xcnet.training(model_output_path="checkpoints/custom/XCNet_001.tflite", csv_filename='train_data.csv')
     # Extract embeddings from audio files in 'test_data' folder with XCNet
     xcnet.embeddings(dataset='test_data', csv_filename='embeddings.csv')    
     # Pseudo-label data and display clusters
