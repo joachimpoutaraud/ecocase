@@ -27,7 +27,7 @@ class BirdNET():
         self.save_path = save_path
         self.download = download
 
-    def _loadAudioFile(self, f, label_vector, config):
+    def _loadAudioFile(self, f, label_vector, config, offset=None, duration=None):
         """Load an audio file and extract features.
         Args:
             f: Path to the audio file.
@@ -45,7 +45,10 @@ class BirdNET():
         # Try to load the audio file
         try:
             # Load audio
-            sig, rate = audio.openAudioFile(f, duration=cfg.SIG_LENGTH if cfg.SAMPLE_CROP_MODE == "first" else None, fmin=cfg.BANDPASS_FMIN, fmax=cfg.BANDPASS_FMAX)
+            if offset is not None and duration is not None:
+                sig, rate = audio.openAudioFile(f, offset=offset, duration=duration, fmin=cfg.BANDPASS_FMIN, fmax=cfg.BANDPASS_FMAX)
+            else:
+                sig, rate = audio.openAudioFile(f, duration=cfg.SIG_LENGTH if cfg.SAMPLE_CROP_MODE == "first" else None, fmin=cfg.BANDPASS_FMIN, fmax=cfg.BANDPASS_FMAX)
 
         # if anything happens print the error and ignore the file
         except Exception as e:
@@ -160,8 +163,8 @@ class BirdNET():
             print(f"Error: Cannot save embeddings for {fpath}.", flush=True)
             utils.writeErrorLog(ex)
             return
+    
         
-
     def _loadTrainingData(self, cache_mode="none", cache_file="", progress_callback=None):
         """Loads the data for training.
 
@@ -294,11 +297,89 @@ class BirdNET():
         return x_train, y_train, valid_labels
 
 
+    def _loadPseudoLabeledData(self, cache_mode="none", cache_file="", progress_callback=None):
+        """
+        Loads the pseudo-labeled dataset for training.
+
+        Reads all categories in the dataframe and uses their names as new labels.
+        The dataframe should contain a column 'file' with all the training files path or urls for each label.
+
+        Args:
+            cache_mode: Cache mode. Can be 'none', 'load' or 'save'. Defaults to 'none'.
+            cache_file: Path to cache file.
+
+        Returns:
+            A tuple of (x_train, y_train, labels).
+        """
+
+        # Load from cache
+        if cache_mode == "load":
+            if os.path.isfile(cache_file):
+                print(f"\t...loading from cache: {cache_file}", flush=True)
+                x_train, y_train, labels, cfg.BINARY_CLASSIFICATION, cfg.MULTI_LABEL = utils.loadFromCache(cache_file)
+                return x_train, y_train, labels
+            else:
+                print(f"\t...cache file not found: {cache_file}", flush=True)
+
+        # Get the unique categories
+        categories = self.df.categories.unique()
+
+        # Load training data
+        x_train = []
+        y_train = []
+
+        for cat in categories:
+
+            # Get label vector
+            label_vector = np.zeros((len(categories),), dtype="float32")
+            
+            # Load files using thread pool       
+            with Pool(cfg.CPU_THREADS) as p:
+                tasks = []
+                # Iterate over rows with start and end duration
+                for _, row in self.df[self.df.categories == cat].iterrows():
+                    task = p.apply_async(partial(self._loadAudioFile, f=row.file, label_vector=label_vector, config=cfg.getConfig(), offset=row.start, duration=row.end))
+                    tasks.append(task)
+
+                # Wait for tasks to complete and monitor progress with tqdm
+                num_files_processed = 0
+                with tqdm(total=len(tasks), desc=f"Loading '{cat}'", unit='f') as progress_bar:
+                    for task in tasks:
+                        result = task.get()
+                        # Make sure result is not empty 
+                        # Empty results might be caused by errors when loading the audio file
+                        # TODO: We should check for embeddings size in result, otherwise we can't add them to the training data
+                        if len(result[0]) > 0:                        
+                            x_train += result[0]
+                            y_train += result[1]
+                        num_files_processed += 1
+                        progress_bar.update(1)
+                        if progress_callback:
+                            progress_callback(num_files_processed, len(tasks), cat)
+        
+        # Convert to numpy arrays
+        x_train = np.array(x_train, dtype="float32")
+        y_train = np.array(y_train, dtype="float32")
+        
+        # Save to cache?
+        if cache_mode == "save":
+            print(f"\t...saving training data to cache: {cache_file}", flush=True)
+            try:
+                # Only save the valid labels
+                utils.saveToCache(cache_file, x_train, y_train, categories)
+            except Exception as e:
+                print(f"\t...error saving cache: {e}", flush=True)
+
+        # Return only the valid labels for further use
+        return x_train, y_train, categories
+
+
     def trainModel(self, on_epoch_end=None, on_trial_result=None, on_data_load_end=None, autotune_directory="autotune", custom_classifier_path=cfg.CUSTOM_CLASSIFIER):
         """Trains a custom classifier.
 
         Args:
             on_epoch_end: A callback function that takes two arguments `epoch`, `logs`.
+            custom_classifier_path (str, optional): Path to the output custom classifier. Default is cfg.CUSTOM_CLASSIFIER.
 
         Returns:
             A keras `History` object, whose `history` property contains all the metrics.
@@ -306,12 +387,16 @@ class BirdNET():
 
         # Load training data
         print("Loading training data...", flush=True)
-        x_train, y_train, labels = self._loadTrainingData(cfg.TRAIN_CACHE_MODE, cfg.TRAIN_CACHE_FILE, on_data_load_end)
+        
+        if cfg.TRAIN_DATA_PATH is None:    
+            x_train, y_train, labels = self._loadPseudoLabeledData(cfg.TRAIN_CACHE_MODE, cfg.TRAIN_CACHE_FILE, on_data_load_end)
+        else:
+            x_train, y_train, labels = self._loadTrainingData(cfg.TRAIN_CACHE_MODE, cfg.TRAIN_CACHE_FILE, on_data_load_end)
+            
         print(f"Done! Loaded {x_train.shape[0]} training samples and {y_train.shape[1]} labels.", flush=True)
 
         if cfg.AUTOTUNE:
             import gc
-
             import keras
             import keras_tuner
 
@@ -450,66 +535,3 @@ class BirdNET():
         print(f"Path to trained classifier model output: {custom_classifier_path}")
 
         return history
-
-
-if __name__ == "__main__":
-    # Parse arguments
-    parser = argparse.ArgumentParser(description="Train a custom classifier with BirdNET")
-    parser.add_argument("--i", default="train_data/", help="Path to training data folder. Subfolder names are used as labels.")
-    parser.add_argument("--crop_mode", default="center", help="Crop mode for training data. Can be 'center', 'first' or 'segments'. Defaults to 'center'.")
-    parser.add_argument("--crop_overlap", type=float, default=0.0, help="Overlap of training data segments in seconds if crop_mode is 'segments'. Defaults to 0.")
-    parser.add_argument("--o", default="checkpoints/custom/Custom_Classifier", help="Path to trained classifier model output.")
-    parser.add_argument("--epochs", type=int, default=50, help="Number of training epochs. Defaults to 50.")
-    parser.add_argument("--batch_size", type=int, default=32, help="Batch size. Defaults to 32.")
-    parser.add_argument("--val_split", type=float, default=0.2, help="Validation split ratio. Defaults to 0.2.")
-    parser.add_argument("--learning_rate", type=float, default=0.001, help="Learning rate. Defaults to 0.001.")
-    parser.add_argument("--hidden_units", type=int, default=0, help="Number of hidden units. Defaults to 0. If set to >0, a two-layer classifier is used.")
-    parser.add_argument("--dropout", type=float, default=0.0, help="Dropout rate. Defaults to 0.")
-    parser.add_argument("--mixup", action=argparse.BooleanOptionalAction, help="Whether to use mixup for training.")
-    parser.add_argument("--upsampling_ratio", type=float, default=0.0, help="Balance train data and upsample minority classes. Values between 0 and 1. Defaults to 0.")
-    parser.add_argument("--upsampling_mode", default="repeat", help="Upsampling mode. Can be 'repeat', 'mean' or 'smote'. Defaults to 'repeat'.")
-    parser.add_argument("--model_format", default="tflite", help="Model output format. Can be 'tflite', 'raven' or 'both'. Defaults to 'tflite'.")
-    parser.add_argument("--model_save_mode", default="replace", help="Model save mode. Can be 'replace' or 'append', where 'replace' will overwrite the original classification layer and 'append' will combine the original classification layer with the new one. Defaults to 'replace'.")
-    parser.add_argument("--cache_mode", default="none", help="Cache mode. Can be 'none', 'load' or 'save'. Defaults to 'none'.")
-    parser.add_argument("--cache_file", default="train_cache.npz", help="Path to cache file. Defaults to 'train_cache.npz'.")
-    parser.add_argument("--threads", type=int, default=min(8, max(1, multiprocessing.cpu_count() // 2)), help="Number of CPU threads.")
-
-    parser.add_argument("--fmin", type=int, default=cfg.SIG_FMIN, help="Minimum frequency for bandpass filter in Hz. Defaults to {} Hz.".format(cfg.SIG_FMIN))
-    parser.add_argument("--fmax", type=int, default=cfg.SIG_FMAX, help="Maximum frequency for bandpass filter in Hz. Defaults to {} Hz.".format(cfg.SIG_FMAX))
-
-    parser.add_argument("--autotune", action=argparse.BooleanOptionalAction, help="Whether to use automatic hyperparameter tuning (this will execute multiple training runs to search for optimal hyperparameters).")
-    parser.add_argument("--autotune_trials", type=int, default=50, help="Number of training runs for hyperparameter tuning. Defaults to 50.")
-    parser.add_argument("--autotune_executions_per_trial", type=int, default=1, help="The number of times a training run with a set of hyperparameters is repeated during hyperparameter tuning (this reduces the variance). Defaults to 1.")
-
-    args = parser.parse_args()
-
-    # Config
-    cfg.TRAIN_DATA_PATH = args.i
-    cfg.SAMPLE_CROP_MODE = args.crop_mode
-    cfg.SIG_OVERLAP = max(0.0, min(2.9, float(args.crop_overlap)))
-    cfg.CUSTOM_CLASSIFIER = args.o
-    cfg.TRAIN_EPOCHS = args.epochs
-    cfg.TRAIN_BATCH_SIZE = args.batch_size
-    cfg.TRAIN_VAL_SPLIT = args.val_split
-    cfg.TRAIN_LEARNING_RATE = args.learning_rate
-    cfg.TRAIN_HIDDEN_UNITS = args.hidden_units
-    cfg.TRAIN_DROPOUT = min(max(0, args.dropout), 0.9)
-    cfg.TRAIN_WITH_MIXUP = args.mixup if args.mixup is not None else cfg.TRAIN_WITH_MIXUP
-    cfg.UPSAMPLING_RATIO = min(max(0, args.upsampling_ratio), 1)
-    cfg.UPSAMPLING_MODE = args.upsampling_mode
-    cfg.TRAINED_MODEL_OUTPUT_FORMAT = args.model_format
-    cfg.TRAINED_MODEL_SAVE_MODE = args.model_save_mode
-    cfg.TRAIN_CACHE_MODE = args.cache_mode.lower()
-    cfg.TRAIN_CACHE_FILE = args.cache_file
-    cfg.TFLITE_THREADS = 1
-    cfg.CPU_THREADS = max(1, int(args.threads))
-
-    cfg.BANDPASS_FMIN = max(0, min(cfg.SIG_FMAX, int(args.fmin)))
-    cfg.BANDPASS_FMAX = max(cfg.SIG_FMIN, min(cfg.SIG_FMAX, int(args.fmax)))
-
-    cfg.AUTOTUNE = args.autotune
-    cfg.AUTOTUNE_TRIALS = args.autotune_trials
-    cfg.AUTOTUNE_EXECUTIONS_PER_TRIAL = args.autotune_executions_per_trial
-
-    # Train model
-    BirdNET().trainModel()

@@ -11,19 +11,56 @@ RANDOM_SEED: int = 2024         # Fixed random seed
 #########################
 
 # Number of audio files to download for each species
-NUM_FILES: int = 20          
+NUM_FILES: int = 30          
 # Xeno-Canto scientific species (e.g. ['Columba palumbus','Fringilla coelebs']). If None, species will only be requested according to the Xeno-Canto searching parameters
-SPECIES_XC = None    
+SPECIES_XC = None
+# SPECIES_XC: list[str] = [
+#     # TINAMOUS
+#     'Tinamus major',
+#     'Crypturellus brevirostris',
+#     'Crypturellus soui',
+#     'Crypturellus cinereus',
+#     'Crypturellus variegatus',
+#     # POTOOS
+#     'Nyctibius grandis',
+#     'Nyctibius griseus',
+#     'Nyctibius bracteatus',
+#     'Nyctibius aethereus',
+#     'Nyctibius leucopterus', 
+#     # FALCONS
+#     'Micrastur ruficollis',
+#     'Micrastur gilvicollis',
+#     'Micrastur mirandollei',
+#     'Micrastur semitorquatus', 
+#     # OWLS
+#     'Megascops roraimae',
+#     'Megascops watsonii', 
+#     'Lophostrix cristata',
+#     'Pulsatrix perspicillata',
+#     'Strix virgata',
+#     'Strix huhula',
+#     'Glaucidium hardyi',
+#     # NIGHTJARS
+#     'Lurocalis semitorquatus',
+#     'Hydropsalis maculicaudus',
+#     'Hydropsalis cayennensis',
+#     'Nyctiprogne leucopyga',
+#     'Chordeiles acutipennis',
+#     'Chordeiles nacunda',
+#     'Nyctipolus nigrescens', 
+#     'Nyctidromus albicollis',
+#     'Hydropsalis climacocerca'
+# ]     
 # Xeno-Canto searching parameters
 PARAMS_XC: list[str] = [         
     # More information here:    https://www.xeno-canto.org/help/search     
     'grp:birds',                # Group to which the species belongs (birds, grasshoppers, bats) 
-    'type:song',                # Type of the bird sound
+    # 'type:song',                # Type of the bird sound
     'len:10-60',                # Length of the recording in seconds
     'q:">C"',                   # Quality rating for the recording
-    'area:america',             # Continental area: africa, america, asia, australia, europe
-    'box:-9.889955,-67.684883,8.143715,-49.649101', # Geographical bounding box (min_lat, min_lon, max_lat, max_lon)
-    # Radius search can be easily made using bboxfinder.com (coordinate format:"Lat / Lng" + draw a circle with radius ~ 1000km)
+    # 'area:america',             # Continental area: africa, america, asia, australia, europe
+    'box:-5.681584,-71.740723,9.535749,-38.364258', # Geographical bounding box (min_lat, min_lon, max_lat, max_lon)
+    # Radius search easily made using bboxfinder.com (coordinate format:"Lat / Lng" + draw a circle with radius ~ 500km, and copy map)
 ] 
 
 ##########################
@@ -32,8 +69,8 @@ PARAMS_XC: list[str] = [
 
 MODEL_VERSION: str = "V2.4"
 PB_MODEL: str = "checkpoints/V2.4/BirdNET_GLOBAL_6K_V2.4_Model"
-MODEL_PATH: str = "checkpoints/V2.4/BirdNET_GLOBAL_6K_V2.4_Model_FP32.tflite" #"checkpoints/custom/Rodvingetrost_Classifier.tflite"
-LABELS_FILE: str = "checkpoints/V2.4/BirdNET_GLOBAL_6K_V2.4_Labels.txt" #"checkpoints/custom/Rodvingetrost_Classifier_Labels.txt"
+MODEL_PATH: str = "checkpoints/V2.4/BirdNET_GLOBAL_6K_V2.4_Model_FP32.tflite" 
+LABELS_FILE: str = "checkpoints/V2.4/BirdNET_GLOBAL_6K_V2.4_Labels.txt"
 MDATA_MODEL_PATH: str = "checkpoints/V2.4/BirdNET_GLOBAL_6K_V2.4_MData_Model_V2_FP16.tflite"
 TRANSLATED_LABELS_PATH: str = "labels/V2.4"
 
@@ -62,7 +99,7 @@ SIG_FMIN: int = 0
 SIG_FMAX: int = 15000
 # Settings for bandpass filter
 BANDPASS_FMIN: int = 250
-BANDPASS_FMAX: int = 8500
+BANDPASS_FMAX: int = 12000
 
 #########################
 #  CLUSTERING SETTINGS  #
@@ -150,7 +187,7 @@ COMBINE_RESULTS: bool = False
 #####################
 
 # Training data path
-TRAIN_DATA_PATH: str = "train_data/"
+TRAIN_DATA_PATH = None
 
 # Sample crop mode
 SAMPLE_CROP_MODE: str = "center"

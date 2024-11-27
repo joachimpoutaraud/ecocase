@@ -23,7 +23,7 @@ class XCNet(XenoCanto, BirdNET):
                 verbose = True,
                 overwrite = False,
                 custom_classifier_path = None,
-                save_path = cfg.TRAIN_DATA_PATH,
+                save_path = "train_data",
                 ):
 
         self.params_xc = params_xc
@@ -34,15 +34,16 @@ class XCNet(XenoCanto, BirdNET):
         self.overwrite = overwrite
         self.save_path = save_path
         
-        # Check whether root directory is existing or not   
-        if os.path.exists(self.save_path):
-            if self.overwrite:
-                # Remove directory
-                shutil.rmtree(str(self.save_path))
-                # Save dataframe
-                os.makedirs(self.save_path)      
-        else:      
-            os.makedirs(self.save_path) 
+        # Check whether root directory is existing or not
+        if self.save_path is not None:   
+            if os.path.exists(self.save_path):
+                if self.overwrite:
+                    # Remove directory
+                    shutil.rmtree(str(self.save_path))
+                    # Save dataframe
+                    os.makedirs(self.save_path)      
+            else:      
+                os.makedirs(self.save_path) 
             
         if custom_classifier_path is not None:
             filename, _ = os.path.splitext(custom_classifier_path)
@@ -51,13 +52,14 @@ class XCNet(XenoCanto, BirdNET):
             cfg.LABELS_FILE = f"{filename}_Labels.txt"
         
         
-    def training(self, dataset=None, train_data_path=None, model_output_path=cfg.CUSTOM_CLASSIFIER, csv_filename=None):
+    def train(self, dataset=None, model_output_path=cfg.CUSTOM_CLASSIFIER, csv_filename=None):
         """
-        Training custom classifier on top of BirdNET model with pseudo-labeled data requested from the Xeno-Canto database.
+        Train custom classifier on top of BirdNET model with pseudo-labeled data requested from the Xeno-Canto database.
+        By default the model is train using the training dataframe with pseudo-labeled data requested from Xeno-Canto.
+        It is however also possible to use a training dataset of labeled audio files, organized in folders by species.
         
         Args:
             dataset (str, optional): Path to dataset. This could be the path to a pandas DataFrame or audio recordings folder. Defaults to None (which corresponds to self.df). 
-            train_data_path (str, optional): Path to training dataset of labeled audio files, organized in folders by species (we use folder names as labels). This also works for non-bird species, as long as you have a dataset of labeled audio files. 
             model_output_path (str, optional): Path to the fine-tuned model. Default is cfg.CUSTOM_CLASSIFIER.
             csv_filename (str, optional): The name of the csv file to save the dataset. Default is None.
             
@@ -79,32 +81,28 @@ class XCNet(XenoCanto, BirdNET):
                     self.df = audio.saveAudioAsDataframe(dataset)
             else:
                 self.df = dataset
-                
-        if train_data_path is not None:
-            # Update training data path and train model
-            cfg.TRAIN_DATA_PATH = train_data_path
-        
-        else: # we build a pseudo-labeled dataset with density-based clustering method       
-            # Extract embeddings from BirdNET
-            self.df = self.embeddings(csv_filename=csv_filename)
+
+        # We build a pseudo-labeled dataset if not traning dataset is provided        
+        if cfg.TRAIN_DATA_PATH is None: 
+            
+            # Build a pseudo-labeled dataset with density-based clustering method       
+            self.df = self.embeddings() # extract embeddings from BirdNET model first
             
             # Find cluster and assign pseudo-labels
             c = cfg.getConfig() # get initial configuration dict
             # We use specific clustering settings for building pseudo-labeled dataset
             cfg.MIN_PTS, cfg.EPS, cfg.METHOD, cfg.KEEP = 3, 'auto', 'DBSCAN', 'BIGGEST' 
-            self.df = self.pseudo_labeling(csv_filename=csv_filename) 
+            self.df = self.pseudo_label(csv_filename=csv_filename) 
             # Reset config file with initial values
             cfg.MIN_PTS, cfg.EPS, cfg.METHOD, cfg.KEEP = c['MIN_PTS'], c['EPS'], c['METHOD'], c['KEEP'] 
-            
-            # Download dataset to disk
-            from utils import download_audio_files
-            download_audio_files(self.df, self.save_path, self.verbose, csv_filename)
+            # Keep only data pseudo-labeled as signal
+            self.df = self.df[self.df.pseudo_label == 1]
         
         if self.verbose:
             print('\n====================== TRAINING THE MODEL ======================\n')
         
         # Train model on top of BirdNET with pseudo-labeled data and save custom classifier
-        history = self.trainModel(custom_classifier_path=model_output_path) # trainModel() function is inherited from BirdNET() class
+        history = self.trainModel(custom_classifier_path=model_output_path) # trainModel() function is inherited from BirdNET() class        
         filename, _ = os.path.splitext(model_output_path)
         
         # Update model and label file paths
@@ -206,7 +204,7 @@ class XCNet(XenoCanto, BirdNET):
         return self.df
     
 
-    def pseudo_labeling(self, dataset=None, display=False, csv_filename=None):
+    def pseudo_label(self, dataset=None, display=False, csv_filename=None):
         """
         Data pseudo-labeling with density-based clustering method (DBCM).
 
@@ -341,7 +339,14 @@ class XCNet(XenoCanto, BirdNET):
 
             if display:
                 from display import interactive_display
-                interactive_display(self.df, output_filename=categories, thumbnails=True, noise=False)
+                
+                if self.save_path is not None:
+                    # Format save_path into Path
+                    save_path = Path(self.save_path)
+                    # Save and append dataframe 
+                    output_filename = save_path / categories
+                
+                interactive_display(self.df, output_filename=output_filename, thumbnails=True, noise=False)
                 
             # Increment
             count += 1
@@ -363,22 +368,16 @@ class XCNet(XenoCanto, BirdNET):
 if __name__ == "__main__":
     
     # Create a Xeno-Canto network
-    xcnet = XCNet()
-    
+    xcnet = XCNet(save_path='train_data')   
     # Build Xeno-Canto dataset with Xeno-Canto parameters from the config file (config.py)
-    xcnet.dataset() 
-    # Train model on top of BirdNET with Xeno-Canto dataset and save custom classifier to disk
-    xcnet.training(model_output_path="checkpoints/custom/XCNet_001.tflite", csv_filename='train_data.csv')
-    # Extract embeddings from audio files in 'test_data' folder with XCNet
-    xcnet.embeddings(dataset='test_data', csv_filename='embeddings.csv')    
-    # Pseudo-label data and display clusters
-    xcnet.pseudo_labeling(display=True, csv_filename='cluster.csv') 
+    xcnet.dataset(csv_filename="xc_data.csv") 
+    # # Train model on top of BirdNET with Xeno-Canto dataset and save custom classifier to disk
+    # xcnet.train(model_output_path="checkpoints/custom/XCNet.tflite", csv_filename='pseudo_data.csv')
+    # # Extract embeddings from audio files in 'test_data' folder with XCNet
+    # xcnet.embeddings(dataset='test_data', csv_filename='embeddings.csv')    
+    # # Pseudo-label data and display clusters
+    # xcnet.pseudo_label(display=True, csv_filename='cluster.csv') 
     
     
     # # Create a Xeno-Canto network with custom classifier
     # xcnet = XCNet(custom_classifier_path="checkpoints/custom/XCNet.tflite")
-    
-    
-    
-
-    
