@@ -99,7 +99,7 @@ SIG_FMIN: int = 0
 SIG_FMAX: int = 15000
 # Settings for bandpass filter
 BANDPASS_FMIN: int = 250
-BANDPASS_FMAX: int = 12000
+BANDPASS_FMAX: int = 15000
 
 #########################
 #  CLUSTERING SETTINGS  #

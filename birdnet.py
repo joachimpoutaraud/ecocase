@@ -282,7 +282,7 @@ class BirdNET():
         
         # Convert to numpy arrays
         x_train = np.array(x_train, dtype="float32")
-        y_train = np.array(y_train, dtype="float32")
+        y_train = np.array(y_train, dtype="float32")        
         
         # Save to cache?
         if cache_mode == "save":
@@ -323,41 +323,15 @@ class BirdNET():
 
         # Get the unique categories
         categories = self.df.categories.unique()
-
-        # Load training data
-        x_train = []
-        y_train = []
-
-        for cat in categories:
-
-            # Get label vector
-            label_vector = np.zeros((len(categories),), dtype="float32")
-            
-            # Load files using thread pool       
-            with Pool(cfg.CPU_THREADS) as p:
-                tasks = []
-                # Iterate over rows with start and end duration
-                for _, row in self.df[self.df.categories == cat].iterrows():
-                    task = p.apply_async(partial(self._loadAudioFile, f=row.file, label_vector=label_vector, config=cfg.getConfig(), offset=row.start, duration=row.end))
-                    tasks.append(task)
-
-                # Wait for tasks to complete and monitor progress with tqdm
-                num_files_processed = 0
-                with tqdm(total=len(tasks), desc=f"Loading '{cat}'", unit='f') as progress_bar:
-                    for task in tasks:
-                        result = task.get()
-                        # Make sure result is not empty 
-                        # Empty results might be caused by errors when loading the audio file
-                        # TODO: We should check for embeddings size in result, otherwise we can't add them to the training data
-                        if len(result[0]) > 0:                        
-                            x_train += result[0]
-                            y_train += result[1]
-                        num_files_processed += 1
-                        progress_bar.update(1)
-                        if progress_callback:
-                            progress_callback(num_files_processed, len(tasks), cat)
         
-        # Convert to numpy arrays
+        # Get the embeddings
+        x_train = self.df.loc[:, self.df.columns.str.startswith("emb")]
+        
+        # Perform one-hot encoding on categories
+        one_hot_encoded = pd.get_dummies(self.df.categories) 
+        y_train = one_hot_encoded.values
+        
+        # Convert to NumPy array         
         x_train = np.array(x_train, dtype="float32")
         y_train = np.array(y_train, dtype="float32")
         
