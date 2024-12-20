@@ -32,6 +32,7 @@ class XCNet(XenoCanto, BirdNET):
         self.format_date = format_date 
         self.verbose = verbose
         self.overwrite = overwrite
+        self.custom_classifier_path = custom_classifier_path
         self.save_path = save_path
         
         # Check whether root directory is existing or not
@@ -43,14 +44,7 @@ class XCNet(XenoCanto, BirdNET):
                     # Save dataframe
                     os.makedirs(self.save_path)      
             else:      
-                os.makedirs(self.save_path) 
-            
-        if custom_classifier_path is not None:
-            filename, _ = os.path.splitext(custom_classifier_path)
-            # Update model and label file paths
-            cfg.MODEL_PATH = custom_classifier_path
-            cfg.LABELS_FILE = f"{filename}_Labels.txt"
-        
+                os.makedirs(self.save_path)         
         
     def train(self, dataset=None, model_output_path=cfg.CUSTOM_CLASSIFIER, csv_filename=None):
         """
@@ -295,6 +289,32 @@ class XCNet(XenoCanto, BirdNET):
                     cluster = best_score[2]
                     
                 else:
+                
+                
+                
+                # import joblib
+                # mapper = joblib.load('umap_model.pkl')
+                
+                # import umap 
+                # import tensorflow as tf 
+                # from tensorflow import keras   
+                               
+                # n_components = 2
+                # encoder = tf.keras.Sequential([
+                #     tf.keras.layers.InputLayer(input_shape=(X.shape[1],)),
+                #     tf.keras.layers.Dense(units=512, activation="relu"),
+                #     tf.keras.layers.Dense(units=512, activation="relu"),
+                #     tf.keras.layers.Dense(units=n_components),
+                # ])                        
+                # embedder = umap.ParametricUMAP(n_components=2, n_epochs=100, verbose=True, random_state=10)                
+                # X = embedder.fit_transform(X.reshape((X.shape[0], -1)))
+                # import matplotlib.pyplot as plt
+                # fig, ax = plt.subplots(1, figsize=(14, 10))
+                # plt.scatter(*X.T, s=5, alpha=1.0)
+                # plt.show()
+                
+                
+                
                     dbcv, _, cluster = estimate_parameters(X)
                     n_components = None
                     
@@ -370,16 +390,18 @@ class XCNet(XenoCanto, BirdNET):
 
 if __name__ == "__main__":
     
-    # Create a Xeno-Canto network
-    xcnet = XCNet(save_path='train_data') # create 'train_data' folder to save data
-    # Build Xeno-Canto dataset with Xeno-Canto parameters from the config file (config.py)
-    # xcnet.dataset(csv_filename="xc_data.csv") 
-    # Train model on top of BirdNET with Xeno-Canto dataset and save to disk
-    xcnet.train(model_output_path="train_data/XCNet.tflite", csv_filename='pseudo_data.csv')
+    # # Create a Xeno-Canto network
+    # xcnet = XCNet(save_path='test_data') # create 'train_data' folder to save data
+    # # Build Xeno-Canto dataset with Xeno-Canto parameters from the config file (config.py)
+    # # xcnet.dataset(csv_filename="xc_data.csv") 
+    # # Train model on top of BirdNET with Xeno-Canto dataset and save to disk
+    # xcnet.train(dataset='train_data/species_pseudo_data.csv', model_output_path="test_data/XCNet.tflite", csv_filename='pseudo_data.csv')
+    # # Update cfg.MODEL_PATH !!!!!!!
+    
     
     # # Reload Xeno-Canto network with custom classifier
-    # xcnet = XCNet(custom_classifier_path="train_data/XCNet_coordinates.tflite")
+    xcnet = XCNet(save_path='test_data', custom_classifier_path='train_data/XCNet_species.tflite')
     # Extract embeddings from audio files in 'test_data' folder with custom XCNet
-    xcnet.embeddings(dataset='test_data', csv_filename='embeddings.csv')    
+    # xcnet.embeddings(dataset='test_data', csv_filename='embeddings.csv') 
     # Pseudo-label data and display clusters
-    xcnet.pseudo_label(display=True, csv_filename='cluster.csv') 
+    xcnet.pseudo_label(dataset='test_data/embeddings_bn.csv', display=True) #, csv_filename='cluster.csv') 

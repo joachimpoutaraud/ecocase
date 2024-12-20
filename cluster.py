@@ -102,10 +102,11 @@ def estimate_parameters(X, n_components=2):
         # Reduce dimensionality of the latent space
         embedding = umap.UMAP(n_components=n_components, random_state=cfg.RANDOM_SEED, densmap=True).fit_transform(X)
         # Determine the parameters for DBSCAN (Sander et al., 1998)
+        # embedding = X
         min_points = embedding.shape[1] * 2 - 1 
         
     else:
-        embedding = X
+        embedding = umap.UMAP(n_components=2, min_dist=0.0, n_neighbors=30, random_state=cfg.RANDOM_SEED, densmap=True).fit_transform(X)
         
         if cfg.MIN_PTS > 1:
             min_points = round(cfg.MIN_PTS)
@@ -150,6 +151,7 @@ def estimate_parameters(X, n_components=2):
         
     elif cfg.METHOD == "HDBSCAN":
         cluster = hdbscan.HDBSCAN(
+            # min_samples=100,
             min_cluster_size=min_points,
             min_samples=round(min_points / 2),
             cluster_selection_epsilon=float(eps),

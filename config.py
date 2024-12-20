@@ -108,7 +108,7 @@ BANDPASS_FMAX: int = 15000
 # Note: Specific clustering settings are used when fine-tuning the model on Xeno-Canto data
 FEATURES: list[str] = ["emb"]          # choose the features used to cluster {'emb', 'centroid'}
 SCALER: str = "MINMAXSCALER"           # scaler method to prepare the features before the clustering {STANDARDSCALER, ROBUSTSCALER, MINMAXSCALER}
-MIN_PTS: str = "auto"                  # minimum number of ROIs to form a cluster {integer or 'auto'}
+MIN_PTS: str = 'auto'                  # minimum number of samples to form a cluster {integer or 'auto'}
 EPS: str = "auto"                      # set the maximum distance between elements in a single clusters {float or 'auto'}
 METHOD: str = "HDBSCAN"                # cluster method that allow some points beeing outside of a cluster {HDBSCAN, DBSCAN}
 KEEP: str = "ALL"                      # define if we want to keep all the clusters or only the biggest cluster, while the rest is discarded as noise {BIGGEST, ALL}

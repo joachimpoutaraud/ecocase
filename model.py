@@ -632,7 +632,7 @@ def embeddings(sample):
     # Does interpreter exist?
     if INTERPRETER == None:
         loadModel(False) 
-
+        
     # Reshape input tensor
     INTERPRETER.resize_tensor_input(INPUT_LAYER_INDEX, [len(sample), *sample[0].shape])
     INTERPRETER.allocate_tensors()

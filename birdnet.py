@@ -99,6 +99,13 @@ class BirdNET():
             offset = row.offset
         else:
             offset = 0
+        
+        # Check whether to use custom classifier or default config classifier
+        if self.custom_classifier_path is not None:
+            filename, _ = os.path.splitext(self.custom_classifier_path)
+            # Update model and label file paths
+            cfg.MODEL_PATH = self.custom_classifier_path
+            cfg.LABELS_FILE = f"{filename}_Labels.txt"
 
         # Initialize dataframe for processing row    
         df = pd.DataFrame([row])
@@ -330,6 +337,12 @@ class BirdNET():
         # Perform one-hot encoding on categories
         one_hot_encoded = pd.get_dummies(self.df.categories) 
         y_train = one_hot_encoded.values
+        
+        # # Initialize the LabelEncoder
+        # from sklearn.preprocessing import LabelEncoder 
+        # label_encoder = LabelEncoder() 
+        # # Fit and transform the column 
+        # y_train = label_encoder.fit_transform(self.df['categories'])
         
         # Convert to NumPy array         
         x_train = np.array(x_train, dtype="float32")
