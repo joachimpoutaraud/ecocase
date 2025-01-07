@@ -13,44 +13,44 @@ RANDOM_SEED: int = 2024         # Fixed random seed
 # Number of audio files to download for each species
 NUM_FILES: int = 30          
 # Xeno-Canto scientific species (e.g. ['Columba palumbus','Fringilla coelebs']). If None, species will only be requested according to the Xeno-Canto searching parameters
-SPECIES_XC = None
-# SPECIES_XC: list[str] = [
-#     # TINAMOUS
-#     'Tinamus major',
-#     'Crypturellus brevirostris',
-#     'Crypturellus soui',
-#     'Crypturellus cinereus',
-#     'Crypturellus variegatus',
-#     # POTOOS
-#     'Nyctibius grandis',
-#     'Nyctibius griseus',
-#     'Nyctibius bracteatus',
-#     'Nyctibius aethereus',
-#     'Nyctibius leucopterus', 
-#     # FALCONS
-#     'Micrastur ruficollis',
-#     'Micrastur gilvicollis',
-#     'Micrastur mirandollei',
-#     'Micrastur semitorquatus', 
-#     # OWLS
-#     'Megascops roraimae',
-#     'Megascops watsonii', 
-#     'Lophostrix cristata',
-#     'Pulsatrix perspicillata',
-#     'Strix virgata',
-#     'Strix huhula',
-#     'Glaucidium hardyi',
-#     # NIGHTJARS
-#     'Lurocalis semitorquatus',
-#     'Hydropsalis maculicaudus',
-#     'Hydropsalis cayennensis',
-#     'Nyctiprogne leucopyga',
-#     'Chordeiles acutipennis',
-#     'Chordeiles nacunda',
-#     'Nyctipolus nigrescens', 
-#     'Nyctidromus albicollis',
-#     'Hydropsalis climacocerca'
-# ]     
+# SPECIES_XC = None
+SPECIES_XC: list[str] = [
+    # TINAMOUS
+    'Tinamus major',
+    'Crypturellus brevirostris',
+    'Crypturellus soui',
+    'Crypturellus cinereus',
+    'Crypturellus variegatus',
+    # POTOOS
+    'Nyctibius grandis',
+    'Nyctibius griseus',
+    'Nyctibius bracteatus',
+    'Nyctibius aethereus',
+    'Nyctibius leucopterus', 
+    # FALCONS
+    'Micrastur ruficollis',
+    'Micrastur gilvicollis',
+    'Micrastur mirandollei',
+    'Micrastur semitorquatus', 
+    # OWLS
+    'Megascops roraimae',
+    'Megascops watsonii', 
+    'Lophostrix cristata',
+    'Pulsatrix perspicillata',
+    'Strix virgata',
+    'Strix huhula',
+    'Glaucidium hardyi',
+    # NIGHTJARS
+    'Lurocalis semitorquatus',
+    'Hydropsalis maculicaudus',
+    'Hydropsalis cayennensis',
+    'Nyctiprogne leucopyga',
+    'Chordeiles acutipennis',
+    'Chordeiles nacunda',
+    'Nyctipolus nigrescens', 
+    'Nyctidromus albicollis',
+    'Hydropsalis climacocerca'
+]     
 # Xeno-Canto searching parameters
 PARAMS_XC: list[str] = [         
     # More information here:    https://www.xeno-canto.org/help/search     
@@ -58,8 +58,8 @@ PARAMS_XC: list[str] = [
     # 'type:song',                # Type of the bird sound
     'len:10-60',                # Length of the recording in seconds
     'q:">C"',                   # Quality rating for the recording
-    # 'area:america',             # Continental area: africa, america, asia, australia, europe
-    'box:-5.681584,-71.740723,9.535749,-38.364258', # Geographical bounding box (min_lat, min_lon, max_lat, max_lon)
+    'area:america',             # Continental area: africa, america, asia, australia, europe
+    # 'box:-5.681584,-71.740723,9.535749,-38.364258', # Geographical bounding box (min_lat, min_lon, max_lat, max_lon)
     # Radius search easily made using bboxfinder.com (coordinate format:"Lat / Lng" + draw a circle with radius ~ 500km, and copy map)
 ] 
 
@@ -235,7 +235,7 @@ TRAIN_CACHE_MODE: str = "none"
 TRAIN_CACHE_FILE: str = "train_cache.npz"
 
 # Use automatic Hyperparameter tuning
-AUTOTUNE: bool = True
+AUTOTUNE: bool = False
 
 # How many trials are done for the hyperparameter tuning
 AUTOTUNE_TRIALS: int = 10

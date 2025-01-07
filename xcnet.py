@@ -264,8 +264,8 @@ class XCNet(XenoCanto, BirdNET):
                 from cluster import prepare_embeddings, estimate_parameters
                 
                 X = prepare_embeddings(df_single_categories, scaler=cfg.SCALER, embeddings=cfg.FEATURES)
-                #-------------------------------------------------------
-        
+                #-------------------------------------------------------                
+
                 if cfg.MIN_PTS == 'auto':    
                     # Automatic estimation of the clustering algorithm parameters
                     #--------------------------------------------------------------------
@@ -286,37 +286,33 @@ class XCNet(XenoCanto, BirdNET):
                     best_score = max(dbscan_parameters, key=lambda x: x[0])
                     dbcv = best_score[0]
                     n_components = best_score[1]
-                    cluster = best_score[2]
-                    
+                    cluster = best_score[2]                
+                
                 else:
-                
-                
-                
-                # import joblib
-                # mapper = joblib.load('umap_model.pkl')
-                
-                # import umap 
-                # import tensorflow as tf 
-                # from tensorflow import keras   
-                               
-                # n_components = 2
-                # encoder = tf.keras.Sequential([
-                #     tf.keras.layers.InputLayer(input_shape=(X.shape[1],)),
-                #     tf.keras.layers.Dense(units=512, activation="relu"),
-                #     tf.keras.layers.Dense(units=512, activation="relu"),
-                #     tf.keras.layers.Dense(units=n_components),
-                # ])                        
-                # embedder = umap.ParametricUMAP(n_components=2, n_epochs=100, verbose=True, random_state=10)                
-                # X = embedder.fit_transform(X.reshape((X.shape[0], -1)))
-                # import matplotlib.pyplot as plt
-                # fig, ax = plt.subplots(1, figsize=(14, 10))
-                # plt.scatter(*X.T, s=5, alpha=1.0)
-                # plt.show()
-                
-                
-                
                     dbcv, _, cluster = estimate_parameters(X)
                     n_components = None
+
+
+                # import umap 
+                # # import tensorflow as tf 
+                # # from tensorflow import keras   
+                            
+                # n_components = 2
+                # # encoder = tf.keras.Sequential([
+                # #     tf.keras.layers.InputLayer(input_shape=(X.shape[1],)),
+                # #     tf.keras.layers.Dense(units=512, activation="relu"),
+                # #     tf.keras.layers.Dense(units=512, activation="relu"),
+                # #     tf.keras.layers.Dense(units=n_components),
+                # # ]) 
+                                    
+                # embedder = umap.ParametricUMAP(n_components=n_components, n_epochs=100, verbose=self.verbose, random_state=cfg.RANDOM_SEED)                
+                # X = embedder.fit_transform(X.reshape((X.shape[0], -1)))
+                # dbcv, _, cluster = estimate_parameters(X)
+                # # import matplotlib.pyplot as plt
+                # # fig, ax = plt.subplots(1, figsize=(14, 10))
+                # # plt.scatter(*X.T, s=5, alpha=1.0)
+                # # plt.show()
+
                     
                 if self.verbose:                
                     # Get the predicted labels and the number of clusters 
@@ -354,7 +350,7 @@ class XCNet(XenoCanto, BirdNET):
                     self.df.loc[(self.df["categories"] == categories) & (
                                     self.df["cluster_number"] >= 0), "pseudo_label"] = int(1) 
                     
-                    # # If there is only one category we can analyze the repertoire of the species
+                    # # TODO If there is only one category we can analyze the repertoire of the species
                     # if len(df_embeddings.categories.unique()) == 1:
                     #     # Add the cluster number to the categories to differentiate them
                     #     df_cluster['categories'] = df_cluster.apply(
@@ -390,18 +386,17 @@ class XCNet(XenoCanto, BirdNET):
 
 if __name__ == "__main__":
     
-    # # Create a Xeno-Canto network
-    # xcnet = XCNet(save_path='test_data') # create 'train_data' folder to save data
-    # # Build Xeno-Canto dataset with Xeno-Canto parameters from the config file (config.py)
-    # # xcnet.dataset(csv_filename="xc_data.csv") 
-    # # Train model on top of BirdNET with Xeno-Canto dataset and save to disk
-    # xcnet.train(dataset='train_data/species_pseudo_data.csv', model_output_path="test_data/XCNet.tflite", csv_filename='pseudo_data.csv')
-    # # Update cfg.MODEL_PATH !!!!!!!
+    # Create a Xeno-Canto network
+    xcnet = XCNet(save_path='train_data') # create 'train_data' folder to save data
+    # Build Xeno-Canto dataset with Xeno-Canto parameters from the config file (config.py)
+    xcnet.dataset(csv_filename="xc_dataset.csv") 
+    # Train model on top of BirdNET with Xeno-Canto dataset and save to disk
+    xcnet.train(model_output_path="checkpoints/custom/XCNet.tflite", csv_filename='train_dataset.csv')
     
     
-    # # Reload Xeno-Canto network with custom classifier
-    xcnet = XCNet(save_path='test_data', custom_classifier_path='train_data/XCNet_species.tflite')
+    # Reload Xeno-Canto network with custom classifier
+    xcnet = XCNet(save_path='test_data', custom_classifier_path='checkpoints/custom/XCNet.tflite')
     # Extract embeddings from audio files in 'test_data' folder with custom XCNet
-    # xcnet.embeddings(dataset='test_data', csv_filename='embeddings.csv') 
+    xcnet.embeddings(dataset='test_data', csv_filename='embeddings.csv') 
     # Pseudo-label data and display clusters
-    xcnet.pseudo_label(dataset='test_data/embeddings_bn.csv', display=True) #, csv_filename='cluster.csv') 
+    xcnet.pseudo_label(display=True, csv_filename='cluster.csv') 

@@ -1,6 +1,4 @@
 import os
-import argparse
-import multiprocessing
 from functools import partial
 from multiprocessing.pool import Pool
 
@@ -13,6 +11,7 @@ import analyze
 import config as cfg
 import model
 import utils
+
 
 class BirdNET():
     
