@@ -14,8 +14,7 @@ from cluster import prepare_embeddings
 import warnings
 warnings.filterwarnings(action="ignore")
 
-
-def create_thumbnails(row):
+def create_thumbnails(row, save_path, encode):
     import librosa
     import librosa.display
     import matplotlib.pyplot as plt
@@ -23,6 +22,7 @@ def create_thumbnails(row):
     import base64
     import soundfile as sf
     import audio
+    import os
     
     y, sr = audio.openAudioFile(row.file, sample_rate=cfg.BANDPASS_FMAX, offset=row.start, duration=row.end - row.start)
     S = librosa.feature.melspectrogram(y=y, sr=sr)
@@ -30,24 +30,50 @@ def create_thumbnails(row):
     plt.figure(figsize=(4, 2))
     librosa.display.specshow(S_db, sr=sr, x_axis='time', y_axis='mel')
     plt.axis('off')
-
-    # Encode image
-    img_buf = BytesIO()
-    plt.savefig(img_buf, format='png')
-    img_buf.seek(0)
-    img_str = base64.b64encode(img_buf.read()).decode('utf-8')
-    plt.close()
-
-    # Encode audio
-    audio_buf = BytesIO()
-    sf.write(audio_buf, y, sr, format='wav')
-    audio_buf.seek(0)
-    audio_str = base64.b64encode(audio_buf.read()).decode('utf-8')
-
-    return f'data:image/png;base64,{img_str}', f'data:audio/wav;base64,{audio_str}'
-
         
-def interactive_display(df_cluster, output_filename='interactive_scatter', thumbnails=True, noise=False, frame_width=1000, frame_height=600, point_size=10):  
+    if encode:
+        # Encode image
+        img_buf = BytesIO()
+        plt.savefig(img_buf, format='png')
+        img_buf.seek(0)
+        img_str = base64.b64encode(img_buf.read()).decode('utf-8')
+        plt.close()
+
+        # Encode audio
+        audio_buf = BytesIO()
+        sf.write(audio_buf, y, sr, format='wav')
+        audio_buf.seek(0)
+        audio_str = base64.b64encode(audio_buf.read()).decode('utf-8')
+
+        return f'data:image/png;base64,{img_str}', f'data:audio/wav;base64,{audio_str}'
+    
+    else:  
+        save_path = os.path.join(os.path.dirname(save_path), 'thumbnails')
+        # Check if the folder exists, and create it if it doesn't
+        if not os.path.exists(save_path):
+            os.makedirs(save_path) 
+         
+        # Save image to disk
+        img_filename = f"{os.path.join(save_path, str(row.name))}.png"
+        plt.savefig(img_filename, format='png', bbox_inches='tight', pad_inches=0)
+        plt.close()
+
+        # Save audio to disk
+        audio_filename = f"{os.path.join(save_path, str(row.name))}.wav"
+        sf.write(audio_filename, y, sr, format='wav')
+
+        return f"{os.path.join('thumbnails', str(row.name))}.png", f"{os.path.join('thumbnails', str(row.name))}.wav"
+
+
+def interactive_display(df_cluster, output_filename='interactive_scatter', thumbnails=True, encode=False, noise=False, frame_width=1000, frame_height=600, point_size=10):  
+    
+    # Check if dataset is a path to a dataframe, audio file or folder
+    if type(df_cluster) == str:
+        import os
+        ext = os.path.splitext(df_cluster)[1]
+        # Check file extension
+        if ext == ".csv": 
+            df_cluster = pd.read_csv(df_cluster, sep=";")
     
     if not noise:  
         # Remove noise points from display
@@ -56,14 +82,16 @@ def interactive_display(df_cluster, output_filename='interactive_scatter', thumb
     reducer = umap.UMAP(n_components=2, random_state=cfg.RANDOM_SEED)
     X = prepare_embeddings(df_cluster, scaler=cfg.SCALER, embeddings=cfg.FEATURES)
     
-    # Get all the cluster labels
+    # Get all the cluster labels and filenames
     labels = df_cluster['cluster_number']
+    
     # Fit the UMAP model
     embedding = reducer.fit_transform(X[labels.to_numpy().astype(int)])
     x, y = embedding[:, 0], embedding[:, 1]
 
     # Get the unique cluster labels and try to get optimal color number
     unique_clusters = labels.unique().astype(str).tolist()
+    
     try:
         colors = Category20[len(unique_clusters)]
     except:
@@ -81,48 +109,42 @@ def interactive_display(df_cluster, output_filename='interactive_scatter', thumb
         import os
         
         nb_cpu = os.cpu_count() 
-        spectrograms, audios = [], []
+        spectrograms, audio_files = [], []
 
-        with tqdm(total=len(df_cluster), desc="Encode audio and spectrogram thumbnails") as pbar: 
+        with tqdm(total=len(df_cluster), desc="Process image and audio thumbnails") as pbar: 
             with ProcessPoolExecutor(max_workers=nb_cpu-1) as executor:
-                futures = [executor.submit(create_thumbnails, row) for _, row in df_cluster.iterrows()]
+                futures = [executor.submit(create_thumbnails, row, output_filename, encode) for _, row in df_cluster.iterrows()]
             
                 for future in futures:
                     pbar.update(1)
-                    img_str, audio_str = future.result()
-                    spectrograms.append(img_str)
-                    audios.append(audio_str)
-                    
-        # # Save list to disk 
-        # import pickle
-        # with open('spectrograms.pkl', 'wb') as file: 
-        #     pickle.dump(spectrograms, file)
-        # with open('audios.pkl', 'wb') as file: 
-        #     pickle.dump(audios, file)
-        
-        # # Load list from disk 
-        # import pickle
-        # with open('spectrograms.pkl', 'rb') as file: 
-        #     spectrograms = pickle.load(file)
-        # with open('audios.pkl', 'rb') as file: 
-        #     audios = pickle.load(file)
+                    try:
+                        img_str, audio_file = future.result()
+                        spectrograms.append(img_str)
+                        audio_files.append(audio_file)
+                    except:
+                        pass
     
-        source = ColumnDataSource(data=dict(x=x, y=y, label=labels.astype(str).tolist(), spectrogram=spectrograms, audio=audios))
+        source = ColumnDataSource(data=dict(x=x, 
+                                            y=y, 
+                                            label=labels.astype(str).tolist(), 
+                                            spectrogram=spectrograms, 
+                                            audio=audio_files, 
+                                            filename=df_cluster['file'].astype(str).tolist(), 
+                                            lat=df_cluster['lat'].astype(str).tolist(), 
+                                            lng=df_cluster['lng'].astype(str).tolist())
+                                  )
         p = figure(frame_width=frame_width, frame_height=frame_height, title=f"{cfg.METHOD} interactive scatter plot with spectrograms and audio", tools="pan,wheel_zoom,reset")
         p.scatter('x', 'y', size=point_size, color=mapper, source=source)
 
         hover = HoverTool(tooltips="""
             <div>
                 <div>
-                    <img
-                        src="@spectrogram" height="200" alt="@spectrogram" width="200"
-                        style="float: left; margin: 0px 15px 15px 0px;"
-                        border="1"
-                    ></img>
+                    <img src="@spectrogram" height="200" width="200" border="1" style="float: left; margin: 0px 15px 15px 0px;"></img>
                 </div>
-                <div>
-                    <div style="font-size: 15px; font-weight: bold;">Label: @label</div>
-                    <div style="font-size: 12px; color: #966;">[$index]</div>
+                <div style="font-size: 15px; font-weight: bold;">Label: @label</div>
+                <div style="font-size: 12px; color: #966;">Filename: @filename</div>
+                <div style="font-size: 12px; color: #966;">Latitude: @lat</div>
+                <div style="font-size: 12px; color: #966;">Longitude: @lng</div>
                 </div>
                 <div>
                     <audio autoplay controls style="width: 200px;">
@@ -140,7 +162,7 @@ def interactive_display(df_cluster, output_filename='interactive_scatter', thumb
         source = ColumnDataSource(data=dict(x=x, y=y, label=labels.astype(str).tolist()))
         p = figure(frame_width=1000, frame_height=600, title=f"{cfg.METHOD} interactive scatter plot", tools="pan,wheel_zoom,reset")
         p.scatter('x', 'y', size=point_size, color=mapper, source=source)
-
+        
     output_file(f"{output_filename}.html")
     show(p)
 

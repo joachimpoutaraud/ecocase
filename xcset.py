@@ -33,8 +33,6 @@ class XenoCanto():
             If True, rows with incorrectly formatted date data are dropped. Default is False.
         verbose (bool, optional): If True, prints messages during the execution of the function. Default is True.
         save_path (str, optional): Path to the directory where the data will be saved. Default is None.
-        download (bool, optional): If True, download the csv file of the dataset. Default is True.
-        csv_filename (str, optional): Full path to the csv file where the DataFrame (df) will be saved. Default is 'dataset.csv'.
  
     Returns:
         pandas.DataFrame: Dataframe containing all the recordings metadata matching the Xeno-Canto searching parameters.
@@ -67,16 +65,19 @@ class XenoCanto():
         page = 1
         
         while page < numPages + 1:
-            # Create Xeno-Canto url with search parameters
-            # params_xc = urllib.parse.quote(' '.join(self.params_xc), safe=':/')
-            params_xc = '%20'.join(self.params_xc)
-            url = 'https://www.xeno-canto.org/api/2/recordings?query={0}&page={1}'.format(params_xc, page)
-            
+            try:
+                params_xc = '%20'.join(self.params_xc)
+                url = 'https://www.xeno-canto.org/api/2/recordings?query={0}&page={1}'.format(params_xc, page)        
+                jsonPage = urllib.request.urlopen(url) 
+            except UnicodeEncodeError:
+                params_xc = urllib.parse.quote(' '.join(self.params_xc), safe=':/')
+                url = 'https://www.xeno-canto.org/api/2/recordings?query={0}&page={1}'.format(params_xc, page)
+                jsonPage = urllib.request.urlopen(url)
+                
             if self.verbose:
                 print("Loading page "+str(page)+"...")
                 print(url)
-    
-            jsonPage = urllib.request.urlopen(url)  
+             
             jsondata = json.loads(jsonPage.read().decode('utf-8'))
             # check number of pages
             numPages = jsondata['numPages']
