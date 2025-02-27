@@ -123,44 +123,72 @@ def interactive_display(df_cluster, output_filename='interactive_scatter', thumb
                         audio_files.append(audio_file)
                     except:
                         pass
-    
-        source = ColumnDataSource(data=dict(x=x, 
-                                            y=y, 
-                                            label=labels.astype(str).tolist(), 
-                                            spectrogram=spectrograms, 
-                                            audio=audio_files, 
-                                            filename=df_cluster['file'].astype(str).tolist(), 
-                                            lat=df_cluster['lat'].astype(str).tolist(), 
-                                            lng=df_cluster['lng'].astype(str).tolist())
-                                  )
+
+        if set(['lat', 'lng']).issubset(df_cluster.columns):
+            source = ColumnDataSource(data=dict(x=x, 
+                                                y=y, 
+                                                label=labels.astype(str).tolist(), 
+                                                spectrogram=spectrograms, 
+                                                audio=audio_files, 
+                                                filename=df_cluster['file'].astype(str).tolist(), 
+                                                lat=df_cluster['lat'].astype(str).tolist(), 
+                                                lng=df_cluster['lng'].astype(str).tolist())
+                                    )
+
+            hover = HoverTool(tooltips="""
+                <div>
+                    <div>
+                        <img src="@spectrogram" height="200" width="200" border="1" style="float: left; margin: 0px 15px 15px 0px;"></img>
+                    </div>
+                    <div style="font-size: 15px; font-weight: bold;">Label: @label</div>
+                    <div style="font-size: 12px; color: #966;">Filename: @filename</div>
+                    <div style="font-size: 12px; color: #966;">Latitude: @lat</div>
+                    <div style="font-size: 12px; color: #966;">Longitude: @lng</div>
+                    </div>
+                    <div>
+                        <audio autoplay controls style="width: 200px;">
+                            <source src="@audio" type="audio/wav">
+                            Your browser does not support the audio element.
+                        </audio>
+                    </div>
+                </div>
+                """
+            )
+
+        else:
+            source = ColumnDataSource(data=dict(x=x, 
+                                                y=y, 
+                                                label=labels.astype(str).tolist(), 
+                                                spectrogram=spectrograms, 
+                                                audio=audio_files, 
+                                                filename=df_cluster['file'].astype(str).tolist())
+                                    )
+
+            hover = HoverTool(tooltips="""
+                <div>
+                    <div>
+                        <img src="@spectrogram" height="200" width="200" border="1" style="float: left; margin: 0px 15px 15px 0px;"></img>
+                    </div>
+                    <div style="font-size: 15px; font-weight: bold;">Label: @label</div>
+                    <div style="font-size: 12px; color: #966;">Filename: @filename</div>
+                    </div>
+                    <div>
+                        <audio autoplay controls style="width: 200px;">
+                            <source src="@audio" type="audio/wav">
+                            Your browser does not support the audio element.
+                        </audio>
+                    </div>
+                </div>
+                """
+            )    
+
         p = figure(frame_width=frame_width, frame_height=frame_height, title=f"{cfg.METHOD} interactive scatter plot with spectrograms and audio", tools="pan,wheel_zoom,reset")
         p.scatter('x', 'y', size=point_size, color=mapper, source=source)
-
-        hover = HoverTool(tooltips="""
-            <div>
-                <div>
-                    <img src="@spectrogram" height="200" width="200" border="1" style="float: left; margin: 0px 15px 15px 0px;"></img>
-                </div>
-                <div style="font-size: 15px; font-weight: bold;">Label: @label</div>
-                <div style="font-size: 12px; color: #966;">Filename: @filename</div>
-                <div style="font-size: 12px; color: #966;">Latitude: @lat</div>
-                <div style="font-size: 12px; color: #966;">Longitude: @lng</div>
-                </div>
-                <div>
-                    <audio autoplay controls style="width: 200px;">
-                        <source src="@audio" type="audio/wav">
-                        Your browser does not support the audio element.
-                    </audio>
-                </div>
-            </div>
-            """
-        )
-
         p.add_tools(hover)
         
     else:
         source = ColumnDataSource(data=dict(x=x, y=y, label=labels.astype(str).tolist()))
-        p = figure(frame_width=1000, frame_height=600, title=f"{cfg.METHOD} interactive scatter plot", tools="pan,wheel_zoom,reset")
+        p = figure(frame_width=frame_width, frame_height=frame_height, title=f"{cfg.METHOD} interactive scatter plot", tools="pan,wheel_zoom,reset")
         p.scatter('x', 'y', size=point_size, color=mapper, source=source)
         
     output_file(f"{output_filename}.html")
