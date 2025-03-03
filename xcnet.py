@@ -82,18 +82,9 @@ class XCNet(XenoCanto, BirdNET):
             # Check if dataset contains already pseudo labels or not
             if 'pseudo_label' not in self.df.columns:                
                 # Build a pseudo-labeled dataset with density-based clustering method       
-                self.df = self.embeddings() # extract embeddings from BirdNET model first
-                
-                # We use specific clustering settings for building pseudo-labeled dataset
-                c = cfg.getConfig() # get initial configuration dict
-                cfg.MIN_PTS, cfg.EPS, cfg.METHOD, cfg.KEEP = 3, 'auto', 'DBSCAN', 'BIGGEST'
-                if len(self.df.categories.unique()) == 1: 
-                    cfg.KEEP = 'ALL' # for repertoire analysis on an unique species
-                
+                self.df = self.embeddings() # extract embeddings from BirdNET model first              
                 # Find cluster and assign pseudo-labels
                 self.df = self.pseudo_label(csv_filename=csv_filename) 
-                # Reset config file with initial values
-                cfg.MIN_PTS, cfg.EPS, cfg.METHOD, cfg.KEEP = c['MIN_PTS'], c['EPS'], c['METHOD'], c['KEEP'] 
 
             # Keep only data pseudo-labeled as signal
             self.df = self.df[self.df.pseudo_label == 1]
@@ -389,30 +380,43 @@ class XCNet(XenoCanto, BirdNET):
 
 if __name__ == "__main__":
     
-    # # Create a Xeno-Canto network
-    # xcnet = XCNet(save_path='train_data') # create 'train_data' folder to save data
-    # # Build Xeno-Canto dataset with Xeno-Canto parameters from the config file (config.py)
-    # xcnet.dataset(csv_filename="xc_dataset.csv") 
-    # # Train model on top of BirdNET with Xeno-Canto dataset and save to disk
-    # xcnet.train(model_output_path="checkpoints/custom/XCNet_EuropA.tflite", csv_filename='train_dataset.csv')
+    # Create a Xeno-Canto network
+    xcnet = XCNet(save_path='train_data') # create 'train_data' folder to save data
+    # Build Xeno-Canto dataset with Xeno-Canto parameters from the config file (config.py)
+    xcnet.dataset(csv_filename="xc_dataset.csv") 
+    # xcnet.df = pd.read_csv("train_data/train_dataset.csv", sep=";")
+
+    # We use specific clustering settings for building pseudo-labeled dataset
+    cfg.MIN_PTS, cfg.EPS, cfg.METHOD, cfg.KEEP = 3, 'auto', 'DBSCAN', 'BIGGEST'
+    if len(xcnet.df.categories.unique()) == 1: 
+        cfg.KEEP = 'ALL' # for repertoire analysis on an unique species
+
+    # Train model on top of BirdNET with Xeno-Canto dataset and save to disk
+    xcnet.train(model_output_path="checkpoints/custom/XCNet.tflite", csv_filename='train_dataset.csv')
     
     
+
+
     # # Reload Xeno-Canto network with custom classifier and define 'test_data' folder
     # xcnet = XCNet(save_path='test_data', custom_classifier_path='checkpoints/custom/XCNet_EuropA.tflite') 
     # # Extract embeddings from audio files in 'test_data' folder with custom XCNet
     # xcnet.embeddings(dataset='train_data/xc_dataset.csv', csv_filename='embeddings.csv') 
+
+    # # We use specific clustering settings for extracting the clusters
+    # cfg.MIN_PTS, cfg.EPS, cfg.METHOD, cfg.KEEP = 'auto', 'auto', 'HDBSCAN', 'ALL'
+
     # # Pseudo-label data and display clusters
     # xcnet.pseudo_label(display=True, csv_filename='cluster.csv') 
     
     
-    # Reload Xeno-Canto network with custom classifier and define 'test_data' folder
-    xcnet = XCNet(save_path='test_data', custom_classifier_path='checkpoints/custom/XCNet_EuropA.tflite') 
-    # Build Xeno-Canto dataset with Xeno-Canto parameters from the config file (config.py)
-    xcnet.dataset(csv_filename="xc_dataset.csv")
-    # Extract embeddings from audio files in 'test_data' folder with custom XCNet
-    xcnet.embeddings(csv_filename='embeddings.csv') 
-    # Pseudo-label data and display clusters
-    xcnet.pseudo_label(display=True, csv_filename='cluster.csv') 
+    # # Reload Xeno-Canto network with custom classifier and define 'test_data' folder
+    # xcnet = XCNet(save_path='test_data', custom_classifier_path='checkpoints/custom/XCNet_EuropA.tflite') 
+    # # Build Xeno-Canto dataset with Xeno-Canto parameters from the config file (config.py)
+    # xcnet.dataset(csv_filename="xc_dataset.csv")
+    # # Extract embeddings from audio files in 'test_data' folder with custom XCNet
+    # xcnet.embeddings(csv_filename='embeddings.csv') 
+    # # Pseudo-label data and display clusters
+    # xcnet.pseudo_label(display=True, csv_filename='cluster.csv') 
     
     # from display import interactive_display
     # interactive_display('test_data/cluster.csv', output_filename="test_data/Turdus", thumbnails=True, noise=False)

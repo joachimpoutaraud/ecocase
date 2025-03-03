@@ -328,7 +328,7 @@ class BirdNET():
                 print(f"\t...cache file not found: {cache_file}", flush=True)
 
         # Get the unique categories
-        categories = self.df.categories.unique()
+        labels = self.df.categories.unique()
         
         # Get the embeddings
         x_train = self.df.loc[:, self.df.columns.str.startswith("emb")]
@@ -352,12 +352,12 @@ class BirdNET():
             print(f"\t...saving training data to cache: {cache_file}", flush=True)
             try:
                 # Only save the valid labels
-                utils.saveToCache(cache_file, x_train, y_train, categories)
+                utils.saveToCache(cache_file, x_train, y_train, labels)
             except Exception as e:
                 print(f"\t...error saving cache: {e}", flush=True)
 
         # Return only the valid labels for further use
-        return x_train, y_train, categories
+        return x_train, y_train, labels
 
 
     def trainModel(self, on_epoch_end=None, on_trial_result=None, on_data_load_end=None, autotune_directory="autotune", custom_classifier_path=cfg.CUSTOM_CLASSIFIER):

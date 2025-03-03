@@ -26,20 +26,48 @@ def openAudioFile(path: str, sample_rate=cfg.SAMPLE_RATE, offset=0.0, duration=N
     Returns:
         Returns the audio time series and the sampling rate.
     """
+    # Load audio file with librosa  
+    try:  
+        import librosa
+        
+        if is_url(path):
+            import requests
+            from io import BytesIO
+            
+            # Open audio file from url request
+            response = requests.get(path)
+            out = BytesIO(response.content)
 
-    import librosa
-    
-    if is_url(path):
-        import requests
-        from io import BytesIO
+        sig, rate = librosa.load(out, sr=sample_rate, offset=offset, duration=duration, mono=True, res_type="kaiser_fast")
+
+    # Load audio file with FFmpeg
+    except:
+        import subprocess
+        import time
+
+        command = ['ffmpeg', '-ss', str(offset), '-t', str(duration), '-i', str(path), '-f', 's16le', '-acodec', 'pcm_s16le', '-ar', str(sample_rate), '-ac', '1', '-']
         
-        # Open audio file from url request
-        response = requests.get(path)
-        path = BytesIO(response.content)
-        
-    # Load audio file with librosa
-    sig, rate = librosa.load(path, sr=sample_rate, offset=offset, duration=duration, mono=True, res_type="kaiser_fast")
-    
+        def load_audio_with_ffmpeg(command, retries=3, delay=5):
+
+            for attempt in range(retries):
+                process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                out, err = process.communicate()
+                
+                if process.returncode == 0:
+                    return np.frombuffer(out, dtype=np.int16)
+                else:
+                    if "503" in err.decode():
+                        time.sleep(delay)
+                    else:
+                        print(f"Attempt {attempt + 1} failed: {err.decode()}")
+                        break
+            
+            print("Failed to load audio after multiple attempts.")
+            return np.frombuffer(out, dtype=np.int16)
+                
+        sig = load_audio_with_ffmpeg(command, retries=3, delay=30)
+        rate = sample_rate
+
     # Bandpass filter
     if fmin != None and fmax != None:
         sig = bandpass(sig, rate, fmin, fmax)
