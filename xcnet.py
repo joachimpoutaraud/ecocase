@@ -195,7 +195,7 @@ class XCNet(XenoCanto, BirdNET):
         return self.df
     
 
-    def pseudo_label(self, dataset=None, display=False, csv_filename=None):
+    def pseudo_label(self, dataset=None, embedder=None, train_df=None, display=False, csv_filename=None):
         """
         Data pseudo-labeling with density-based clustering method (DBCM).
 
@@ -256,14 +256,40 @@ class XCNet(XenoCanto, BirdNET):
                 # Prepare the embeddings of that categories
                 #-------------------------------------------------------
                 from cluster import prepare_embeddings, estimate_parameters
-                
                 X = prepare_embeddings(df_single_categories, scaler=cfg.SCALER, embeddings=cfg.FEATURES)
-                #-------------------------------------------------------                
+
+                if embedder is not None:
+
+                    # Select landmarks indexes from x1.
+                    df_train = pd.read_csv(train_df, sep=";")
+                    x1 = prepare_embeddings(df_train, scaler=cfg.SCALER, embeddings=cfg.FEATURES)
+                    landmark_idx = list(np.random.choice(range(x1.shape[0]), int(x1.shape[0]/100), replace=False))
+
+                    # Add the landmark points to x2 for training.
+                    x2_lmk = np.concatenate((X, x1[landmark_idx]))
+
+                    # Make our landmarks vector, which is nan where we have no landmark information.
+                    embedder.transform(X) 
+
+                    landmarks = np.stack(
+                        [np.array([np.nan, np.nan])]*X.shape[0] + list(
+                            embedder.transform(
+                                x1[landmark_idx]
+                            )
+                        )
+                    )
+
+                    # Set landmark loss weight and continue training our Parametric UMAP model.
+                    embedder.landmark_loss_weight = 0.01
+                    embedder.fit(x2_lmk, landmark_positions=landmarks)
+                    X = embedder.transform(X)
+  
+                #-------------------------------------------------------              
 
                 if cfg.MIN_PTS == 'auto':    
                     # Automatic estimation of the clustering algorithm parameters
                     #--------------------------------------------------------------------
-                    range_n_components = [2,3,4,5,6,7,8,9,10,11]
+                    range_n_components = [2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]
                     dbscan_parameters = []
                     
                     # Multi-CPU process
@@ -280,40 +306,20 @@ class XCNet(XenoCanto, BirdNET):
                     best_score = max(dbscan_parameters, key=lambda x: x[0])
                     dbcv = best_score[0]
                     n_components = best_score[1]
-                    cluster = best_score[2]                
+                    cluster = best_score[2] 
+                    eps = best_score[3]
+                    min_samples = best_score[4]               
                 
                 else:
-                    dbcv, _, cluster = estimate_parameters(X)
-                    n_components = None
-
-
-                # import umap 
-                # # import tensorflow as tf 
-                # # from tensorflow import keras   
-                            
-                # n_components = 2
-                # # encoder = tf.keras.Sequential([
-                # #     tf.keras.layers.InputLayer(input_shape=(X.shape[1],)),
-                # #     tf.keras.layers.Dense(units=512, activation="relu"),
-                # #     tf.keras.layers.Dense(units=512, activation="relu"),
-                # #     tf.keras.layers.Dense(units=n_components),
-                # # ]) 
-                                    
-                # embedder = umap.ParametricUMAP(n_components=n_components, n_epochs=100, verbose=self.verbose, random_state=cfg.RANDOM_SEED)                
-                # X = embedder.fit_transform(X.reshape((X.shape[0], -1)))
-                # dbcv, _, cluster = estimate_parameters(X)
-                # # import matplotlib.pyplot as plt
-                # # fig, ax = plt.subplots(1, figsize=(14, 10))
-                # # plt.scatter(*X.T, s=5, alpha=1.0)
-                # # plt.show()
-
+                    dbcv, n_components, cluster, eps, min_samples = estimate_parameters(X)
                     
                 if self.verbose:                
                     # Get the predicted labels and the number of clusters 
                     clusters = len(np.unique(cluster.labels_[cluster.labels_ >= 0])) # remove noisy samples
-                    percentage = int(round(np.sum(cluster.labels_ >= 0) / X.shape[0], 2) * 100)             
-                    print(f'\nClustering {percentage}% of the data: Found {clusters} number of soundtypes with n_components={n_components}.')
-                    print(f'Density-Based Clustering Validation: {dbcv}')
+                    percentage = int(round(np.sum(cluster.labels_ >= 0) / X.shape[0], 2) * 100)  
+                    print(f'Data clustering percentage (without noise): {percentage}%')           
+                    print(f'Number of clusters found: {clusters} (n_components={n_components}, eps={eps}, min_samples={min_samples})')
+                    print(f'Density-Based Clustering Validation: {dbcv}´\n')
 
                 # Add the label found with the clustering
                 #-------------------------------------------------------
@@ -356,10 +362,8 @@ class XCNet(XenoCanto, BirdNET):
                 if self.save_path is not None:
                     # Format save_path into Path
                     save_path = Path(self.save_path)
-                    # Save and append dataframe 
-                    output_filename = save_path / categories
                 
-                interactive_display(self.df, output_filename=output_filename, thumbnails=True, noise=False)
+                interactive_display(self.df, output_filename=categories, save_path=save_path, thumbnails=True, noise=False)
                 
             # Increment
             count += 1
@@ -383,8 +387,8 @@ if __name__ == "__main__":
     # Create a Xeno-Canto network
     xcnet = XCNet(save_path='train_data') # create 'train_data' folder to save data
     # Build Xeno-Canto dataset with Xeno-Canto parameters from the config file (config.py)
-    xcnet.dataset(csv_filename="xc_dataset.csv") 
-    # xcnet.df = pd.read_csv("train_data/train_dataset.csv", sep=";")
+    # xcnet.dataset(csv_filename="xc_dataset.csv") 
+    xcnet.df = pd.read_csv("train_data/train_dataset.csv", sep=";")
 
     # We use specific clustering settings for building pseudo-labeled dataset
     cfg.MIN_PTS, cfg.EPS, cfg.METHOD, cfg.KEEP = 3, 'auto', 'DBSCAN', 'BIGGEST'
@@ -392,7 +396,21 @@ if __name__ == "__main__":
         cfg.KEEP = 'ALL' # for repertoire analysis on an unique species
 
     # Train model on top of BirdNET with Xeno-Canto dataset and save to disk
-    xcnet.train(model_output_path="checkpoints/custom/XCNet.tflite", csv_filename='train_dataset.csv')
+    embedder = xcnet.train(model_output_path="checkpoints/custom/XCNet.tflite", csv_filename='train_dataset.csv')
+
+
+
+    xcnet = XCNet(save_path='test_data')
+    # Extract embeddings from audio files in 'test_data' folder with custom XCNet
+    # xcnet.embeddings(dataset='test_data', csv_filename='embeddings.csv') 
+
+    # We use specific clustering settings for extracting the clusters
+    cfg.MIN_PTS, cfg.EPS, cfg.METHOD, cfg.KEEP = 'auto', 'auto', 'HDBSCAN', 'ALL'
+    # Pseudo-label data and display clusters
+    dataset = pd.read_csv("test_data/embeddings.csv", sep=";")
+    xcnet.pseudo_label(dataset=dataset, embedder=embedder, train_df='train_data/train_dataset.csv', display=True, csv_filename='cluster.csv')
+    # xcnet.pseudo_label(embedder=embedder, train_df='train_data/train_dataset.csv', display=True, csv_filename='cluster.csv') 
+
     
     
 

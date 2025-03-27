@@ -147,15 +147,17 @@ def estimate_parameters(X, n_components=2):
 
     # Perform clustering from embedding array               
     if cfg.METHOD == "DBSCAN":
-        cluster = DBSCAN(eps=eps, min_samples=min_points).fit(embedding)
+        cluster = DBSCAN(
+            min_samples=min_points,
+            eps=eps, 
+            ).fit(embedding)
         
     elif cfg.METHOD == "HDBSCAN":
         cluster = hdbscan.HDBSCAN(
-            # min_samples=100,
             min_cluster_size=min_points,
-            min_samples=round(min_points / 2),
+            min_samples=min_points,
             cluster_selection_epsilon=float(eps),
-        ).fit(embedding)
+            ).fit(embedding)
     
     # Evaluate clusters with DBCV score
     dbcv = validity_index(X.astype(np.float64), cluster.labels_, metric='euclidean')
@@ -163,4 +165,4 @@ def estimate_parameters(X, n_components=2):
     if math.isnan(dbcv):
         dbcv = 0
     
-    return dbcv, n_components, cluster
+    return dbcv, n_components, cluster, eps, min_points

@@ -328,7 +328,7 @@ class BirdNET():
                 print(f"\t...cache file not found: {cache_file}", flush=True)
 
         # Get the unique categories
-        labels = self.df.categories.unique()
+        categories = self.df.categories.unique()
         
         # Get the embeddings
         x_train = self.df.loc[:, self.df.columns.str.startswith("emb")]
@@ -352,12 +352,12 @@ class BirdNET():
             print(f"\t...saving training data to cache: {cache_file}", flush=True)
             try:
                 # Only save the valid labels
-                utils.saveToCache(cache_file, x_train, y_train, labels)
+                utils.saveToCache(cache_file, x_train, y_train, categories)
             except Exception as e:
                 print(f"\t...error saving cache: {e}", flush=True)
 
         # Return only the valid labels for further use
-        return x_train, y_train, labels
+        return x_train, y_train, categories
 
 
     def trainModel(self, on_epoch_end=None, on_trial_result=None, on_data_load_end=None, autotune_directory="autotune", custom_classifier_path=cfg.CUSTOM_CLASSIFIER):
@@ -380,144 +380,42 @@ class BirdNET():
             x_train, y_train, labels = self._loadTrainingData(cfg.TRAIN_CACHE_MODE, cfg.TRAIN_CACHE_FILE, on_data_load_end)
             
         print(f"Done! Loaded {x_train.shape[0]} training samples and {y_train.shape[1]} labels.", flush=True)
-
-        if cfg.AUTOTUNE:
-            import gc
-            import keras
-            import keras_tuner
-
-            # Call callback to initialize progress bar
-            if on_trial_result:
-                on_trial_result(0)
-
-            class BirdNetTuner(keras_tuner.BayesianOptimization):
-                def __init__(self, x_train, y_train, max_trials, executions_per_trial, on_trial_result):
-                    super().__init__(
-                        max_trials=max_trials,
-                        executions_per_trial=executions_per_trial,
-                        overwrite=True,
-                        directory=autotune_directory,
-                        project_name="birdnet_analyzer"
-                    )
-                    self.x_train = x_train
-                    self.y_train = y_train
-                    self.on_trial_result = on_trial_result
-
-                def run_trial(self, trial, *args, **kwargs):
-                    histories = []
-                    hp: keras_tuner.HyperParameters = trial.hyperparameters
-                    trial_number = len(self.oracle.trials)
-
-                    for execution in range(int(self.executions_per_trial)):
-                        print(f"Running Trial #{trial_number} execution #{execution + 1}", flush=True)
-
-                        # Build model
-                        print("Building model...", flush=True)
-                        classifier = model.buildLinearClassifier(self.y_train.shape[1], 
-                                                                self.x_train.shape[1], 
-                                                                hidden_units=hp.Choice("hidden_units", [0, 128, 256, 512, 1024, 2048], default=cfg.TRAIN_HIDDEN_UNITS), 
-                                                                dropout=hp.Choice("dropout", [0.0, 0.25, 0.33, 0.5, 0.75, 0.9], default=cfg.TRAIN_DROPOUT))
-                        print("Done!", flush=True)
-
-                        # Only allow repeat upsampling in multi-label setting
-                        upsampling_choices = ['repeat', 'mean', 'linear'] #SMOTE is too slow
-
-                        if cfg.MULTI_LABEL:
-                            upsampling_choices = ['repeat']
-
-                        # Train model
-                        print("Training model...", flush=True)
-                        classifier, history = model.trainLinearClassifier(
-                            classifier,
-                            self.x_train,
-                            self.y_train,
-                            epochs=cfg.TRAIN_EPOCHS,
-                            batch_size=hp.Choice("batch_size", [8, 16, 32, 64, 128], default=cfg.TRAIN_BATCH_SIZE),
-                            learning_rate=hp.Choice("learning_rate", [0.1, 0.01, 0.005, 0.002, 0.001, 0.0005, 0.0002, 0.0001], default=cfg.TRAIN_LEARNING_RATE),
-                            val_split=cfg.TRAIN_VAL_SPLIT,
-                            upsampling_ratio=hp.Choice("upsampling_ratio",[0.0, 0.25, 0.33, 0.5, 0.75, 1.0], default=cfg.UPSAMPLING_RATIO),
-                            upsampling_mode=hp.Choice("upsampling_mode", upsampling_choices, default=cfg.UPSAMPLING_MODE), 
-                            train_with_mixup=hp.Boolean("mixup", default=cfg.TRAIN_WITH_MIXUP),
-                            train_with_label_smoothing=hp.Boolean("label_smoothing", default=cfg.TRAIN_WITH_LABEL_SMOOTHING),
-                        )
-
-                        # Get the best validation loss
-                        # Is it maybe better to return the negative val_auprc??
-                        best_val_loss = history.history["val_loss"][np.argmin(history.history["val_loss"])]
-                        histories.append(best_val_loss)
-
-                        print(f"Finished Trial #{trial_number} execution #{execution + 1}. best validation loss: {best_val_loss}", flush=True)
-
-                    keras.backend.clear_session()
-                    del classifier
-                    del history
-                    gc.collect()
-
-                    # Call the on_trial_result callback
-                    if self.on_trial_result:
-                        self.on_trial_result(trial_number)
-
-                    return histories
-
-            tuner = BirdNetTuner(x_train=x_train, y_train=y_train, max_trials=cfg.AUTOTUNE_TRIALS, executions_per_trial=cfg.AUTOTUNE_EXECUTIONS_PER_TRIAL, on_trial_result=on_trial_result)
-            tuner.search()
-            best_params = tuner.get_best_hyperparameters()[0]
-            print("Best params: ")
-            print("hidden_units: ", best_params["hidden_units"])
-            print("dropout: ", best_params["dropout"])
-            print("batch_size: ", best_params["batch_size"])
-            print("learning_rate: ", best_params["learning_rate"])
-            print("upsampling_mode: ", best_params["upsampling_mode"])
-            print("upsampling_ratio: ", best_params["upsampling_ratio"])
-            print("mixup: ", best_params["mixup"])
-            print("label_smoothing: ", best_params["label_smoothing"])
-            cfg.TRAIN_HIDDEN_UNITS = best_params["hidden_units"]
-            cfg.TRAIN_DROPOUT = best_params["dropout"]
-            cfg.TRAIN_BATCH_SIZE = best_params["batch_size"]
-            cfg.TRAIN_LEARNING_RATE = best_params["learning_rate"]
-            cfg.UPSAMPLING_MODE = best_params["upsampling_mode"]
-            cfg.UPSAMPLING_RATIO = best_params["upsampling_ratio"]
-            cfg.TRAIN_WITH_MIXUP = best_params["mixup"]
-            cfg.TRAIN_WITH_LABEL_SMOOTHING = best_params["label_smoothing"]
-            
-
-        # Build model
-        print("Building model...", flush=True)
-        classifier = model.buildLinearClassifier(y_train.shape[1], x_train.shape[1], cfg.TRAIN_HIDDEN_UNITS, cfg.TRAIN_DROPOUT)
-        print("Done!", flush=True)
         
-        # Train model
-        print("Training model...", flush=True)
-        classifier, history = model.trainLinearClassifier(
-            classifier,
-            x_train,
-            y_train,
-            epochs=cfg.TRAIN_EPOCHS,
-            batch_size=cfg.TRAIN_BATCH_SIZE,
-            learning_rate=cfg.TRAIN_LEARNING_RATE,
-            val_split=cfg.TRAIN_VAL_SPLIT,
-            upsampling_ratio=cfg.UPSAMPLING_RATIO,
-            upsampling_mode=cfg.UPSAMPLING_MODE,
-            train_with_mixup=cfg.TRAIN_WITH_MIXUP,
-            train_with_label_smoothing=cfg.TRAIN_WITH_LABEL_SMOOTHING,
-            on_epoch_end=on_epoch_end,
-        )
+        
+        
+    
+              
+        from umap.parametric_umap import ParametricUMAP       
+        from tensorflow import keras
 
-        # Best validation AUPRC (at minimum validation loss)
-        best_val_auprc = history.history["val_AUPRC"][np.argmin(history.history["val_loss"])]
-        best_val_auroc = history.history["val_AUROC"][np.argmin(history.history["val_loss"])]
+        # # Build the ConvNet encoder        
+        # inputs = keras.Input(shape=(x_train.shape[1], 1))  # Input layer for embedding
+        # x = keras.layers.Conv1D(filters=64, kernel_size=3, activation='relu', padding='same')(inputs)
+        # x = keras.layers.MaxPooling1D(pool_size=2)(x)
+        # x = keras.layers.Conv1D(filters=128, kernel_size=3, activation='relu', padding='same')(x)
+        # x = keras.layers.MaxPooling1D(pool_size=2)(x)
+        # x = keras.layers.Conv1D(filters=256, kernel_size=3, activation='relu', padding='same')(x)
+        # x = keras.layers.GlobalAveragePooling1D()(x)  # Global pooling to reduce dimensionality
+        # encoded_output = keras.layers.Dense(128, activation='relu')(x)  # Fully connected dense layer
+        # encoder = keras.Model(inputs, encoded_output, name="ConvNet_Encoder") # Create the encoder model
+        
+        print("Building embedder...", flush=True)
 
-        if cfg.TRAINED_MODEL_OUTPUT_FORMAT == "both":
-            model.save_raven_model(classifier, custom_classifier_path, labels)
-            model.saveLinearClassifier(classifier, custom_classifier_path, labels, mode=cfg.TRAINED_MODEL_SAVE_MODE)
-        elif cfg.TRAINED_MODEL_OUTPUT_FORMAT == "tflite":
-            model.saveLinearClassifier(classifier, custom_classifier_path, labels, mode=cfg.TRAINED_MODEL_SAVE_MODE)
-        elif cfg.TRAINED_MODEL_OUTPUT_FORMAT == "raven":
-            model.save_raven_model(classifier, custom_classifier_path, labels)
-        else:
-            raise ValueError(f"Unknown model output format: {cfg.TRAINED_MODEL_OUTPUT_FORMAT}")
+        keras_fit_kwargs = {"callbacks": [
+            keras.callbacks.EarlyStopping(
+                monitor='loss',
+                min_delta=10**-2,
+                patience=10,
+                verbose=1,
+            )
+        ]}
 
-        print(f"Done! Best AUPRC: {best_val_auprc}, Best AUROC: {best_val_auroc}", flush=True)
-        print(f"Path to trained classifier model output: {custom_classifier_path}")
-
-        return history
+        labels = np.argmax(y_train, axis=1)
+        embedder = ParametricUMAP(
+                                  batch_size=cfg.TRAIN_BATCH_SIZE, 
+                                  random_state=cfg.RANDOM_SEED,
+                                  keras_fit_kwargs=keras_fit_kwargs,
+                                  verbose=self.verbose,
+                                  ).fit(x_train, labels)
+        
+        return embedder

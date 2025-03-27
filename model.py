@@ -172,6 +172,96 @@ def buildLinearClassifier(num_labels, input_size, hidden_units=0, dropout=0.0):
     return model
 
 
+def trainEpisodicPrototypicalNetwork(
+    classifier,
+    x_train,
+    y_train,
+    num_classes,
+    num_support,
+    num_query,
+    epochs,
+    learning_rate,
+    on_epoch_end=None,
+):
+    """Trains a classifier using episodic training with prototypical networks.
+
+    Args:
+        classifier: The classifier to be trained.
+        x_train: Training samples.
+        y_train: One-hot encoded labels.
+        num_classes: Number of classes.
+        num_support: Number of support samples per class.
+        num_query: Number of query samples per class.
+        epochs: Number of epochs to train.
+        learning_rate: The learning rate during training.
+        on_epoch_end: Optional callback `function(epoch, logs)`.
+
+    Returns:
+        (classifier, history)
+    """
+    from tensorflow import keras
+    import tensorflow as tf
+
+    class FunctionCallback(keras.callbacks.Callback):
+        def __init__(self, on_epoch_end=None) -> None:
+            super().__init__()
+            self.on_epoch_end_fn = on_epoch_end
+
+        def on_epoch_end(self, epoch, logs=None):
+            if self.on_epoch_end_fn:
+                self.on_epoch_end_fn(epoch, logs)
+
+    def compute_prototypes(support_set, num_classes, num_support):
+        """Compute class prototypes from the support set."""
+        prototypes = []
+        for i in range(num_classes):
+            class_samples = support_set[i * num_support : (i + 1) * num_support]
+            class_prototype = tf.reduce_mean(class_samples, axis=0)
+            prototypes.append(class_prototype)
+        return tf.stack(prototypes)
+
+    def compute_distances(prototypes, query_set):
+        """Compute distances between prototypes and query set samples."""
+        distances = []
+        for query in query_set:
+            dists = tf.norm(prototypes - query, axis=1)
+            distances.append(dists)
+        return tf.stack(distances)
+
+    def create_episode(x_train, y_train, num_classes, num_support, num_query):
+        """Create an episode with support and query sets."""
+        support_set = []
+        query_set = []
+        for i in range(num_classes):
+            class_indices = np.where(np.argmax(y_train, axis=1) == i)[0]
+            selected_indices = np.random.choice(class_indices, num_support + num_query, replace=False)
+            support_set.append(x_train[selected_indices[:num_support]])
+            query_set.append(x_train[selected_indices[num_support:]])
+        return np.concatenate(support_set), np.concatenate(query_set)
+
+    optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
+    loss_fn = keras.losses.SparseCategoricalCrossentropy(from_logits=True)
+
+    history = []
+
+    for epoch in range(epochs):
+        support_set, query_set = create_episode(x_train, y_train, num_classes, num_support, num_query)
+        with tf.GradientTape() as tape:
+            prototypes = compute_prototypes(support_set, num_classes, num_support)
+            distances = compute_distances(prototypes, query_set)
+            logits = -distances
+            labels = tf.repeat(tf.range(num_classes), num_query)
+            loss = loss_fn(labels, logits)
+
+        gradients = tape.gradient(loss, classifier.trainable_variables)
+        optimizer.apply_gradients(zip(gradients, classifier.trainable_variables))
+
+        history.append(loss.numpy())
+
+        if on_epoch_end:
+            on_epoch_end(epoch, {"loss": loss.numpy()})
+
+
 def trainLinearClassifier(
     classifier,
     x_train,

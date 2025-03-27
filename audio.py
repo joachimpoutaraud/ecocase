@@ -36,9 +36,9 @@ def openAudioFile(path: str, sample_rate=cfg.SAMPLE_RATE, offset=0.0, duration=N
             
             # Open audio file from url request
             response = requests.get(path)
-            out = BytesIO(response.content)
+            path = BytesIO(response.content)
 
-        sig, rate = librosa.load(out, sr=sample_rate, offset=offset, duration=duration, mono=True, res_type="kaiser_fast")
+        sig, rate = librosa.load(path, sr=sample_rate, offset=offset, duration=duration, mono=True, res_type="kaiser_fast")
 
     # Load audio file with FFmpeg
     except:

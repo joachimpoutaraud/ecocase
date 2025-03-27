@@ -200,7 +200,7 @@ UPSAMPLING_RATIO: float = 0.0
 UPSAMPLING_MODE = "repeat"
 
 # Number of epochs to train for
-TRAIN_EPOCHS: int = 50
+TRAIN_EPOCHS: int = 150
 
 # Batch size for training
 TRAIN_BATCH_SIZE: int = 32

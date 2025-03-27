@@ -14,7 +14,7 @@ from cluster import prepare_embeddings
 import warnings
 warnings.filterwarnings(action="ignore")
 
-def create_thumbnails(row, save_path, encode):
+def create_thumbnails(row, save_path, encode=False):
     import librosa
     import librosa.display
     import matplotlib.pyplot as plt
@@ -47,25 +47,29 @@ def create_thumbnails(row, save_path, encode):
 
         return f'data:image/png;base64,{img_str}', f'data:audio/wav;base64,{audio_str}'
     
-    else:  
-        save_path = os.path.join(os.path.dirname(save_path), 'thumbnails')
+    else:           
+        # Ensure save_path is not None
+        if save_path is None:
+            raise ValueError("save_path cannot be None when encode is False")
+        
+        save_path = os.path.join(save_path, 'thumbnails')
         # Check if the folder exists, and create it if it doesn't
         if not os.path.exists(save_path):
             os.makedirs(save_path) 
-         
+
         # Save image to disk
-        img_filename = f"{os.path.join(save_path, str(row.name))}.png"
+        img_filename = f"{os.path.join(save_path, str(row.categories) + str(row.start))}.png"
         plt.savefig(img_filename, format='png', bbox_inches='tight', pad_inches=0)
         plt.close()
 
         # Save audio to disk
-        audio_filename = f"{os.path.join(save_path, str(row.name))}.wav"
+        audio_filename = f"{os.path.join(save_path, str(row.categories) + str(row.start))}.wav"
         sf.write(audio_filename, y, sr, format='wav')
 
-        return f"{os.path.join('thumbnails', str(row.name))}.png", f"{os.path.join('thumbnails', str(row.name))}.wav"
+        return f"{os.path.join(save_path, str(row.categories) + str(row.start))}.png", f"{os.path.join(save_path, str(row.categories) + str(row.start))}.wav"
 
 
-def interactive_display(df_cluster, output_filename='interactive_scatter', thumbnails=True, encode=False, noise=False, frame_width=1000, frame_height=600, point_size=10):  
+def interactive_display(df_cluster, output_filename='interactive_scatter', save_path=None, thumbnails=True, encode=False, noise=False, frame_width=1000, frame_height=600, point_size=10):  
     
     # Check if dataset is a path to a dataframe, audio file or folder
     if type(df_cluster) == str:
@@ -113,7 +117,7 @@ def interactive_display(df_cluster, output_filename='interactive_scatter', thumb
 
         with tqdm(total=len(df_cluster), desc="Process image and audio thumbnails") as pbar: 
             with ProcessPoolExecutor(max_workers=nb_cpu-1) as executor:
-                futures = [executor.submit(create_thumbnails, row, output_filename, encode) for _, row in df_cluster.iterrows()]
+                futures = [executor.submit(create_thumbnails, row, save_path, encode) for _, row in df_cluster.iterrows()]
             
                 for future in futures:
                     pbar.update(1)
