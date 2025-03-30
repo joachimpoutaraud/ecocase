@@ -45,7 +45,7 @@ def openAudioFile(path: str, sample_rate=cfg.SAMPLE_RATE, offset=0.0, duration=N
         import subprocess
         import time
 
-        command = ['ffmpeg', '-ss', str(offset), '-t', str(duration), '-i', str(path), '-f', 's16le', '-acodec', 'pcm_s16le', '-ar', str(sample_rate), '-ac', '1', '-']
+        command = ['ffmpeg', '-hide_banner', '-ss', str(offset), '-t', str(duration), '-i', str(path), '-f', 's16le', '-acodec', 'pcm_s16le', '-ar', str(sample_rate), '-ac', '1', '-']
         
         def load_audio_with_ffmpeg(command, retries=3, delay=5):
 
@@ -59,10 +59,8 @@ def openAudioFile(path: str, sample_rate=cfg.SAMPLE_RATE, offset=0.0, duration=N
                     if "503" in err.decode():
                         time.sleep(delay)
                     else:
-                        print(f"Attempt {attempt + 1} failed: {err.decode()}")
                         break
             
-            print("Failed to load audio after multiple attempts.")
             return np.frombuffer(out, dtype=np.int16)
                 
         sig = load_audio_with_ffmpeg(command, retries=3, delay=30)
@@ -309,6 +307,7 @@ def bandpass(sig, rate, fmin, fmax, order=5):
 # the Nyquist frequency and a default stop band attenuation of 100 dB. 
 # For a complete description of this method, see Discrete-Time Signal Processing 
 # (Second Edition), by Alan Oppenheim, Ronald Schafer, and John Buck, Prentice Hall 1998, pp. 474-476.
+
 def bandpassKaiserFIR(sig, rate, fmin, fmax, width=0.02, stopband_attenuation_db=100):
 
     # Check if we have to bandpass at all

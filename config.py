@@ -4,14 +4,14 @@ import os
 #  CONFIG FILE  #
 #################
 
-RANDOM_SEED: int = 2024         # Fixed random seed
+RANDOM_SEED: int = 2025         # Fixed random seed
 
 #########################
 # XENO-CANTO PARAMETERS #
 #########################
 
 # Number of audio files to download for each species
-NUM_FILES: int = 30          
+NUM_FILES: int = 50          
 # Xeno-Canto scientific species (e.g. ['Columba palumbus','Fringilla coelebs']). If None, species will only be requested according to the Xeno-Canto searching parameters
 # SPECIES_XC = None
 SPECIES_XC: list[str] = [
@@ -56,8 +56,8 @@ PARAMS_XC: list[str] = [
     # More information here:    https://www.xeno-canto.org/help/search     
     'grp:birds',                # Group to which the species belongs (birds, grasshoppers, bats) 
     # 'type:song',                # Type of the bird sound
-    'len:10-60',                # Length of the recording in seconds
-    'q:">C"',                   # Quality rating for the recording
+    'len:1-100',                # Length of the recording (seconds)
+    'q:">C"',                   # Quality rating of the recording
     'area:america',             # Continental area: africa, america, asia, australia, europe
     # 'box:-5.681584,-71.740723,9.535749,-38.364258', # Geographical bounding box (min_lat, min_lon, max_lat, max_lon)
     # Radius search easily made using bboxfinder.com (coordinate format:"Lat / Lng" + draw a circle with radius ~ 500km, and copy map)
@@ -104,12 +104,10 @@ BANDPASS_FMAX: int = 15000
 #########################
 #  CLUSTERING SETTINGS  #
 #########################
-
-# Note: Specific clustering settings are used when fine-tuning the model on Xeno-Canto data
-FEATURES: list[str] = ["emb"]          # choose the features used to cluster {'emb', 'centroid'}
-SCALER: str = "MINMAXSCALER"           # scaler method to prepare the features before the clustering {STANDARDSCALER, ROBUSTSCALER, MINMAXSCALER}
+ 
 MIN_PTS: str = 'auto'                  # minimum number of samples to form a cluster {integer or 'auto'}
 EPS: str = "auto"                      # set the maximum distance between elements in a single clusters {float or 'auto'}
+METRIC: str = 'cosine'                 # metric to use when calculating distance between instances in a feature array.
 METHOD: str = "HDBSCAN"                # cluster method that allow some points beeing outside of a cluster {HDBSCAN, DBSCAN}
 KEEP: str = "ALL"                      # define if we want to keep all the clusters or only the biggest cluster, while the rest is discarded as noise {BIGGEST, ALL}
 
@@ -200,7 +198,7 @@ UPSAMPLING_RATIO: float = 0.0
 UPSAMPLING_MODE = "repeat"
 
 # Number of epochs to train for
-TRAIN_EPOCHS: int = 150
+TRAIN_EPOCHS: int = 50
 
 # Batch size for training
 TRAIN_BATCH_SIZE: int = 32
@@ -268,214 +266,9 @@ FILE_STORAGE_PATH: str = ""
 # GET AND SET CONFIG #
 ######################
 
-def getConfig():
-    return {
-        "RANDOM_SEED": RANDOM_SEED,
-        "NUM_FILES": NUM_FILES,
-        "SPECIES_XC": SPECIES_XC,
-        "PARAMS_XC": PARAMS_XC,
-        "MODEL_VERSION": MODEL_VERSION,
-        "PB_MODEL": PB_MODEL,
-        "MODEL_PATH": MODEL_PATH,
-        "MDATA_MODEL_PATH": MDATA_MODEL_PATH,
-        "LABELS_FILE": LABELS_FILE,
-        "TRANSLATED_LABELS_PATH": TRANSLATED_LABELS_PATH,
-        "CUSTOM_CLASSIFIER": CUSTOM_CLASSIFIER,
-        "SAMPLE_RATE": SAMPLE_RATE,
-        "SIG_LENGTH": SIG_LENGTH,
-        "SIG_OVERLAP": SIG_OVERLAP,
-        "SIG_MINLEN": SIG_MINLEN,
-        "SIG_FMIN": SIG_FMIN,
-        "SIG_FMAX": SIG_FMAX,
-        "BANDPASS_FMIN": BANDPASS_FMIN,
-        "BANDPASS_FMAX": BANDPASS_FMAX,
-        "FEATURES": FEATURES,
-        "SCALER": SCALER,
-        "MIN_PTS": MIN_PTS,
-        "EPS": EPS,
-        "METHOD": METHOD,
-        "KEEP": KEEP,
-        "LATITUDE": LATITUDE,
-        "LONGITUDE": LONGITUDE,
-        "WEEK": WEEK,
-        "LOCATION_FILTER_THRESHOLD": LOCATION_FILTER_THRESHOLD,
-        "CODES_FILE": CODES_FILE,
-        "SPECIES_LIST_FILE": SPECIES_LIST_FILE,
-        "ALLOWED_FILETYPES": ALLOWED_FILETYPES,
-        "INPUT_PATH": INPUT_PATH,
-        "OUTPUT_PATH": OUTPUT_PATH,
-        "CPU_THREADS": CPU_THREADS,
-        "TFLITE_THREADS": TFLITE_THREADS,
-        "APPLY_SIGMOID": APPLY_SIGMOID,
-        "SIGMOID_SENSITIVITY": SIGMOID_SENSITIVITY,
-        "MIN_CONFIDENCE": MIN_CONFIDENCE,
-        "BATCH_SIZE": BATCH_SIZE,
-        "RESULT_TYPES": RESULT_TYPES,
-        "OUTPUT_FILENAME": OUTPUT_RAVEN_FILENAME,
-        "TRAIN_DATA_PATH": TRAIN_DATA_PATH,
-        "SAMPLE_CROP_MODE": SAMPLE_CROP_MODE,
-        "NON_EVENT_CLASSES": NON_EVENT_CLASSES,
-        "UPSAMPLING_RATIO": UPSAMPLING_RATIO,
-        "UPSAMPLING_MODE": UPSAMPLING_MODE,
-        "TRAIN_EPOCHS": TRAIN_EPOCHS,
-        "TRAIN_VAL_SPLIT": TRAIN_VAL_SPLIT,
-        "TRAIN_BATCH_SIZE": TRAIN_BATCH_SIZE,
-        "TRAIN_LEARNING_RATE": TRAIN_LEARNING_RATE,
-        "TRAIN_HIDDEN_UNITS": TRAIN_HIDDEN_UNITS,
-        "TRAIN_DROPOUT": TRAIN_DROPOUT,
-        "TRAIN_WITH_MIXUP": TRAIN_WITH_MIXUP,
-        "TRAIN_WITH_LABEL_SMOOTHING": TRAIN_WITH_LABEL_SMOOTHING,
-        "TRAINED_MODEL_OUTPUT_FORMAT": TRAINED_MODEL_OUTPUT_FORMAT,
-        "TRAINED_MODEL_SAVE_MODE": TRAINED_MODEL_SAVE_MODE,
-        "TRAIN_CACHE_MODE": TRAIN_CACHE_MODE,
-        "TRAIN_CACHE_FILE": TRAIN_CACHE_FILE,
-        "CODES": CODES,
-        "LABELS": LABELS,
-        "TRANSLATED_LABELS": TRANSLATED_LABELS,
-        "SPECIES_LIST": SPECIES_LIST,
-        "ERROR_LOG_FILE": ERROR_LOG_FILE,
-        "FILE_LIST": FILE_LIST,
-        "FILE_STORAGE_PATH": FILE_STORAGE_PATH,
-        "SKIP_EXISTING_RESULTS": SKIP_EXISTING_RESULTS,
-        "USE_NOISE": USE_NOISE,
-    }
+def get_config():
+    return {k: v for k, v in globals().items() if k.isupper()}
 
-def setConfig(c):
-
-    global RANDOM_SEED
-    global NUM_FILES
-    global SPECIES_XC
-    global PARAMS_XC
-    global MODEL_VERSION
-    global PB_MODEL
-    global MODEL_PATH
-    global MDATA_MODEL_PATH
-    global LABELS_FILE
-    global TRANSLATED_LABELS_PATH
-    global CUSTOM_CLASSIFIER
-    global SAMPLE_RATE
-    global SIG_LENGTH
-    global SIG_OVERLAP
-    global SIG_MINLEN
-    global SIG_FMIN
-    global SIG_FMAX
-    global BANDPASS_FMIN
-    global BANDPASS_FMAX
-    global FEATURES
-    global SCALER
-    global MIN_PTS
-    global EPS
-    global METHOD
-    global KEEP
-    global LATITUDE
-    global LONGITUDE
-    global WEEK
-    global LOCATION_FILTER_THRESHOLD
-    global CODES_FILE
-    global SPECIES_LIST_FILE
-    global ALLOWED_FILETYPES
-    global INPUT_PATH
-    global OUTPUT_PATH
-    global CPU_THREADS
-    global TFLITE_THREADS
-    global APPLY_SIGMOID
-    global SIGMOID_SENSITIVITY
-    global MIN_CONFIDENCE
-    global BATCH_SIZE
-    global RESULT_TYPES
-    global OUTPUT_RAVEN_FILENAME
-    global TRAIN_DATA_PATH
-    global SAMPLE_CROP_MODE
-    global NON_EVENT_CLASSES
-    global UPSAMPLING_RATIO
-    global UPSAMPLING_MODE
-    global TRAIN_EPOCHS
-    global TRAIN_VAL_SPLIT
-    global TRAIN_BATCH_SIZE
-    global TRAIN_LEARNING_RATE
-    global TRAIN_HIDDEN_UNITS
-    global TRAIN_DROPOUT
-    global TRAIN_WITH_MIXUP
-    global TRAIN_WITH_LABEL_SMOOTHING
-    global TRAINED_MODEL_OUTPUT_FORMAT
-    global TRAINED_MODEL_SAVE_MODE
-    global TRAIN_CACHE_MODE
-    global TRAIN_CACHE_FILE
-    global CODES
-    global LABELS
-    global TRANSLATED_LABELS
-    global SPECIES_LIST
-    global ERROR_LOG_FILE
-    global FILE_LIST
-    global FILE_STORAGE_PATH
-    global SKIP_EXISTING_RESULTS
-    global USE_NOISE
-
-    RANDOM_SEED = c["RANDOM_SEED"]
-    NUM_FILES = c["NUM_FILES"]
-    SCIENTIFIC_SPECIES = c["SPECIES_XC"]
-    PARAMS_XC = c["PARAMS_XC"]
-    MODEL_VERSION = c["MODEL_VERSION"]
-    PB_MODEL = c["PB_MODEL"]
-    MODEL_PATH = c["MODEL_PATH"]
-    MDATA_MODEL_PATH = c["MDATA_MODEL_PATH"]
-    LABELS_FILE = c["LABELS_FILE"]
-    TRANSLATED_LABELS_PATH = c["TRANSLATED_LABELS_PATH"]
-    CUSTOM_CLASSIFIER = c["CUSTOM_CLASSIFIER"]
-    SAMPLE_RATE = c["SAMPLE_RATE"]
-    SIG_LENGTH = c["SIG_LENGTH"]
-    SIG_OVERLAP = c["SIG_OVERLAP"]
-    SIG_MINLEN = c["SIG_MINLEN"]
-    SIG_FMIN = c["SIG_FMIN"]
-    SIG_FMAX = c["SIG_FMAX"]
-    BANDPASS_FMIN = c["BANDPASS_FMIN"]
-    BANDPASS_FMAX = c["BANDPASS_FMAX"]
-    FEATURES = c["FEATURES"]
-    SCALER = c["SCALER"]
-    MIN_PTS = c["MIN_PTS"]
-    EPS = c["EPS"]
-    METHOD = c["METHOD"]
-    KEEP = c["KEEP"]
-    LATITUDE = c["LATITUDE"]
-    LONGITUDE = c["LONGITUDE"]
-    WEEK = c["WEEK"]
-    LOCATION_FILTER_THRESHOLD = c["LOCATION_FILTER_THRESHOLD"]
-    CODES_FILE = c["CODES_FILE"]
-    SPECIES_LIST_FILE = c["SPECIES_LIST_FILE"]
-    ALLOWED_FILETYPES = c["ALLOWED_FILETYPES"]
-    INPUT_PATH = c["INPUT_PATH"]
-    OUTPUT_PATH = c["OUTPUT_PATH"]
-    CPU_THREADS = c["CPU_THREADS"]
-    TFLITE_THREADS = c["TFLITE_THREADS"]
-    APPLY_SIGMOID = c["APPLY_SIGMOID"]
-    SIGMOID_SENSITIVITY = c["SIGMOID_SENSITIVITY"]
-    MIN_CONFIDENCE = c["MIN_CONFIDENCE"]
-    BATCH_SIZE = c["BATCH_SIZE"]
-    RESULT_TYPES = c["RESULT_TYPES"]
-    OUTPUT_RAVEN_FILENAME = c["OUTPUT_FILENAME"]
-    TRAIN_DATA_PATH = c["TRAIN_DATA_PATH"]
-    SAMPLE_CROP_MODE = c["SAMPLE_CROP_MODE"]
-    NON_EVENT_CLASSES = c["NON_EVENT_CLASSES"]
-    UPSAMPLING_RATIO = c["UPSAMPLING_RATIO"]
-    UPSAMPLING_MODE = c["UPSAMPLING_MODE"]
-    TRAIN_EPOCHS = c["TRAIN_EPOCHS"]
-    TRAIN_VAL_SPLIT = c["TRAIN_VAL_SPLIT"]
-    TRAIN_BATCH_SIZE = c["TRAIN_BATCH_SIZE"]
-    TRAIN_LEARNING_RATE = c["TRAIN_LEARNING_RATE"]
-    TRAIN_HIDDEN_UNITS = c["TRAIN_HIDDEN_UNITS"]
-    TRAIN_DROPOUT = c["TRAIN_DROPOUT"]
-    TRAIN_WITH_MIXUP = c["TRAIN_WITH_MIXUP"]
-    TRAIN_WITH_LABEL_SMOOTHING = c["TRAIN_WITH_LABEL_SMOOTHING"]
-    TRAINED_MODEL_OUTPUT_FORMAT = c["TRAINED_MODEL_OUTPUT_FORMAT"]
-    TRAINED_MODEL_SAVE_MODE = c["TRAINED_MODEL_SAVE_MODE"]
-    TRAIN_CACHE_MODE = c["TRAIN_CACHE_MODE"]
-    TRAIN_CACHE_FILE = c["TRAIN_CACHE_FILE"]
-    CODES = c["CODES"]
-    LABELS = c["LABELS"]
-    TRANSLATED_LABELS = c["TRANSLATED_LABELS"]
-    SPECIES_LIST = c["SPECIES_LIST"]
-    ERROR_LOG_FILE = c["ERROR_LOG_FILE"]
-    FILE_LIST = c["FILE_LIST"]
-    FILE_STORAGE_PATH = c["FILE_STORAGE_PATH"]
-    SKIP_EXISTING_RESULTS = c["SKIP_EXISTING_RESULTS"]
-    USE_NOISE = c["USE_NOISE"]
+def set_config(c: dict):
+    for k, v in c.items():
+        globals()[k] = v

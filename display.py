@@ -82,15 +82,15 @@ def interactive_display(df_cluster, output_filename='interactive_scatter', save_
     if not noise:  
         # Remove noise points from display
         df_cluster = df_cluster[df_cluster['pseudo_label'] > 0]
-        
-    reducer = umap.UMAP(n_components=2, random_state=cfg.RANDOM_SEED)
-    X = prepare_embeddings(df_cluster, scaler=cfg.SCALER, embeddings=cfg.FEATURES)
     
+    # Prepare the embeddings    
+    X = df_cluster.loc[:, df_cluster.columns.str.startswith("emb")].to_numpy()
     # Get all the cluster labels and filenames
     labels = df_cluster['cluster_number']
     
     # Fit the UMAP model
-    embedding = reducer.fit_transform(X[labels.to_numpy().astype(int)])
+    reducer = umap.UMAP(n_components=2, metric='cosine', random_state=cfg.RANDOM_SEED, densmap=True)
+    embedding = reducer.fit_transform(X)
     x, y = embedding[:, 0], embedding[:, 1]
 
     # Get the unique cluster labels and try to get optimal color number

@@ -142,8 +142,8 @@ class BirdNET():
                     
                 # Copy audio chunk rows into dataframe
                 df = pd.DataFrame([df.iloc[0].copy() for _ in range(1, len(embeddings) + 1)])
-                
                 data = np.concatenate([np.asarray(timestamps), np.asarray(embeddings)], axis=1)
+                
                 # Format timestamps and embeddings into new dataframe 
                 cols = ['start', 'end'] 
                 cols += ['emb' + str(idx).zfill(4) for idx in range(1, len(embeddings[0]) + 1)] 
@@ -414,6 +414,7 @@ class BirdNET():
         embedder = ParametricUMAP(
                                   batch_size=cfg.TRAIN_BATCH_SIZE, 
                                   random_state=cfg.RANDOM_SEED,
+                                  metric=cfg.METRIC,
                                   keras_fit_kwargs=keras_fit_kwargs,
                                   verbose=self.verbose,
                                   ).fit(x_train, labels)

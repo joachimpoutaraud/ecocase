@@ -226,9 +226,9 @@ class XenoCanto():
                 print('Composition of the dataset:')
                 print('   - Number of audio files: %2.0f' % len(self.df))
                 print('   - Number of species: %2.0f' % len(self.df['en'].unique()))
-                print('   - Unique species: {}\n'.format(self.df['en'].unique()))
+                print('   - Unique species: {}'.format(self.df['en'].unique()))
             else:
-                print('*** WARNING ***\nThe dataframe is empty.')   
+                print('\n*** WARNING ***\nThe dataframe is empty.')   
                 print("No audio recording was found with the parameters:\n{}".format(self.params_xc))
                 return
                 
