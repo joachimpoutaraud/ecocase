@@ -18,7 +18,7 @@ import warnings
 warnings.filterwarnings(action="ignore")
 
 
-def estimate_parameters(X, config, n_components=3, metric='cosine'):
+def estimate_parameters(X, config, n_components=2, metric='cosine'):
     
     # Restore config in case we're on Windows to be thread save
     cfg.set_config(config)
@@ -92,8 +92,8 @@ def estimate_parameters(X, config, n_components=3, metric='cosine'):
             min_cluster_size=min_points,
             min_samples=min_points,
             cluster_selection_epsilon=float(eps),
-            metric='cosine',
-            ).fit(embedding.astype('float64'))
+            metric='precomputed',
+            ).fit(pw_distance.astype('float64'))
     
     # Evaluate clusters with DBCV score
     dbcv = validity_index(X.astype(np.float64), cluster.labels_, metric=metric)

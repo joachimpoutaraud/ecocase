@@ -9,7 +9,6 @@ from bokeh.transform import factor_cmap
 from bokeh.palettes import Category20
 
 import config as cfg
-from cluster import prepare_embeddings
 
 import warnings
 warnings.filterwarnings(action="ignore")
@@ -89,7 +88,7 @@ def interactive_display(df_cluster, output_filename='interactive_scatter', save_
     labels = df_cluster['cluster_number']
     
     # Fit the UMAP model
-    reducer = umap.UMAP(n_components=2, metric='cosine', random_state=cfg.RANDOM_SEED, densmap=True)
+    reducer = umap.UMAP(n_components=2, metric=cfg.METRIC, random_state=cfg.RANDOM_SEED, densmap=True)
     embedding = reducer.fit_transform(X)
     x, y = embedding[:, 0], embedding[:, 1]
 

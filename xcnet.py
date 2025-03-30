@@ -289,11 +289,11 @@ class XCNet(XenoCanto, BirdNET):
               
                 config = cfg.get_config()
 
-                if cfg.MIN_PTS == 'auto':    
+                if cfg.MIN_PTS == 'auto' and len(df_single_categories) > 500:    
                     # Automatic estimation of the clustering algorithm parameters
                     #--------------------------------------------------------------------
                     if self.verbose:
-                        print(f'{cfg.METHOD} min_samples value determination...')
+                        print(f'Automatic estimation of min_samples parameter...')
                     
                     dbscan_parameters = []
                     best_score = None
@@ -310,8 +310,6 @@ class XCNet(XenoCanto, BirdNET):
                                 
                                 # Check if the current score is lower than the previous best score
                                 if best_score is not None and results[0] < best_score[0]:
-                                    break
-                                elif n_components > X.shape[0] * 0.2 - 1:
                                     break
                                 
                                 # Update the best score
@@ -408,7 +406,7 @@ if __name__ == "__main__":
 
     # We use specific clustering settings for building pseudo-labeled dataset
     config = cfg.get_config()
-    config["MIN_PTS"], config["EPS"], config["METHOD"], config["KEEP"] = 3, 'auto', 'DBSCAN', 'BIGGEST'
+    config["KEEP"] = 'BIGGEST'
     if len(xcnet.df.categories.unique()) == 1: 
         config["KEEP"] = 'ALL' # keep all clusters for repertoire analysis on an unique species
     cfg.set_config(config) # restore config in case we're on Windows to be thread save
@@ -423,7 +421,7 @@ if __name__ == "__main__":
 
     # # We use specific clustering settings for extracting the clusters
     # config = cfg.get_config()
-    # config["MIN_PTS"], config["EPS"], config["METHOD"], config["KEEP"] = 'auto', 'auto', 'HDBSCAN', 'ALL'
+    # config["KEEP"] = 'ALL'
     # cfg.set_config(config) # restore config in case we're on Windows to be thread save
    
     # # Pseudo-label data and display clusters
