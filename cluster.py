@@ -23,13 +23,9 @@ def estimate_parameters(X, config, n_components=2, metric='cosine'):
     # Restore config in case we're on Windows to be thread save
     cfg.set_config(config)
     
-    # Reduce dimensionality of the latent space
-    embedding = umap.UMAP(
-        n_components=n_components, 
-        metric=metric, 
-        random_state=cfg.RANDOM_SEED, 
-        densmap=True
-        ).fit_transform(X)
+    # Fit and transform the UMAP model
+    reducer = umap.UMAP(n_components=n_components, metric=cfg.METRIC, random_state=cfg.RANDOM_SEED)
+    embedding = reducer.fit_transform(X)
     
     if cfg.MIN_PTS == 'auto':      
         # Determine the parameters for DBSCAN (Sander et al., 1998)

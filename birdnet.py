@@ -380,13 +380,10 @@ class BirdNET():
             x_train, y_train, labels = self._loadTrainingData(cfg.TRAIN_CACHE_MODE, cfg.TRAIN_CACHE_FILE, on_data_load_end)
             
         print(f"Done! Loaded {x_train.shape[0]} training samples and {y_train.shape[1]} labels.", flush=True)
-        
-        
-        
-    
               
         from umap.parametric_umap import ParametricUMAP       
         from tensorflow import keras
+        import joblib
 
         # # Build the ConvNet encoder        
         # inputs = keras.Input(shape=(x_train.shape[1], 1))  # Input layer for embedding
@@ -418,5 +415,8 @@ class BirdNET():
                                   keras_fit_kwargs=keras_fit_kwargs,
                                   verbose=self.verbose,
                                   ).fit(x_train, labels)
+        
+        # Save the model
+        joblib.dump(embedder, custom_classifier_path)
         
         return embedder

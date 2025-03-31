@@ -38,7 +38,7 @@ def openAudioFile(path: str, sample_rate=cfg.SAMPLE_RATE, offset=0.0, duration=N
             response = requests.get(path)
             path = BytesIO(response.content)
 
-        sig, rate = librosa.load(path, sr=sample_rate, offset=offset, duration=duration, mono=True, res_type="kaiser_fast")
+        sig, sample_rate = librosa.load(path, sr=sample_rate, offset=offset, duration=duration, mono=True, res_type="kaiser_fast")
 
     # Load audio file with FFmpeg
     except:
@@ -64,13 +64,12 @@ def openAudioFile(path: str, sample_rate=cfg.SAMPLE_RATE, offset=0.0, duration=N
             return np.frombuffer(out, dtype=np.int16)
                 
         sig = load_audio_with_ffmpeg(command, retries=3, delay=30)
-        rate = sample_rate
 
     # Bandpass filter
     if fmin != None and fmax != None:
-        sig = bandpass(sig, rate, fmin, fmax)
+        sig = bandpass(sig, sample_rate, fmin, fmax)
     
-    return sig, rate
+    return sig, sample_rate
 
 def writeAudioFile(row, rootdir='train_data'):
     

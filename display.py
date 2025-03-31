@@ -88,7 +88,7 @@ def interactive_display(df_cluster, output_filename='interactive_scatter', save_
     labels = df_cluster['cluster_number']
     
     # Fit the UMAP model
-    reducer = umap.UMAP(n_components=2, metric=cfg.METRIC, random_state=cfg.RANDOM_SEED, densmap=True)
+    reducer = umap.UMAP(n_components=2, metric=cfg.METRIC, random_state=cfg.RANDOM_SEED)
     embedding = reducer.fit_transform(X)
     x, y = embedding[:, 0], embedding[:, 1]
 

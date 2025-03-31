@@ -82,9 +82,7 @@ class XCNet(XenoCanto, BirdNET):
             # Check if dataset contains already pseudo labels or not
             if 'pseudo_label' not in self.df.columns:                
                 # Build a pseudo-labeled dataset with density-based clustering method       
-                self.df = self.embeddings() # extract embeddings from BirdNET model first 
-                # import pandas as pd 
-                # self.df = pd.read_csv('train_data/embeddings.csv', sep=";")            
+                self.df = self.embeddings() # extract embeddings from BirdNET model first           
                 # Find cluster and assign pseudo-labels
                 self.df = self.pseudo_label(csv_filename=csv_filename)
             
@@ -95,14 +93,14 @@ class XCNet(XenoCanto, BirdNET):
             print('====================== TRAINING THE MODEL ======================\n')
         
         # Train model on top of BirdNET with pseudo-labeled data and save custom classifier
-        history = self.trainModel(custom_classifier_path=model_output_path) # trainModel() function is inherited from BirdNET() class        
+        embedder = self.trainModel(custom_classifier_path=model_output_path) # trainModel() function is inherited from BirdNET() class        
         filename, _ = os.path.splitext(model_output_path)
         
         # Update model and label file paths
         cfg.MODEL_PATH = model_output_path
         cfg.LABELS_FILE = f"{filename}_Labels.txt"
         
-        return history
+        return embedder
         
 
     def embeddings(self, dataset=None, csv_filename=None): 
@@ -289,6 +287,8 @@ class XCNet(XenoCanto, BirdNET):
               
                 config = cfg.get_config()
 
+                print(f'Clustering {categories} species ({count+1}/{len(self.df.categories.unique())})...\n')
+
                 if cfg.MIN_PTS == 'auto' and len(df_single_categories) > 500:    
                     # Automatic estimation of the clustering algorithm parameters
                     #--------------------------------------------------------------------
@@ -407,24 +407,26 @@ if __name__ == "__main__":
     # We use specific clustering settings for building pseudo-labeled dataset
     config = cfg.get_config()
     config["KEEP"] = 'BIGGEST'
-    if len(xcnet.df.categories.unique()) == 1: 
-        config["KEEP"] = 'ALL' # keep all clusters for repertoire analysis on an unique species
+    # if len(xcnet.df.categories.unique()) == 1: 
+    #     config["KEEP"] = 'ALL' # keep all clusters for repertoire analysis on an unique species
     cfg.set_config(config) # restore config in case we're on Windows to be thread save
     
     # Train model on top of BirdNET with Xeno-Canto dataset and save to disk
-    embedder = xcnet.train(model_output_path="checkpoints/custom/XCNet.tflite", csv_filename='train_dataset.csv')
+    embedder = xcnet.train(model_output_path="checkpoints/custom/embedder.joblib", csv_filename='train_dataset.csv')
 
 
-    # xcnet = XCNet(save_path='test_data')
-    # # Extract embeddings from audio files in 'test_data' folder with custom XCNet
-    # # xcnet.embeddings(dataset='test_data', csv_filename='embeddings.csv') 
+    xcnet = XCNet(save_path='test_data')
+    # Extract embeddings from audio files in 'test_data' folder with custom XCNet
+    # xcnet.embeddings(dataset='test_data', csv_filename='embeddings.csv') 
+    dataset = pd.read_csv("test_data/embeddings.csv", sep=";")
+    # import joblib
+    # embedder = joblib.load('checkpoints/custom/embedder.joblib')
 
-    # # We use specific clustering settings for extracting the clusters
-    # config = cfg.get_config()
-    # config["KEEP"] = 'ALL'
-    # cfg.set_config(config) # restore config in case we're on Windows to be thread save
+    # We use specific clustering settings for extracting the clusters
+    config = cfg.get_config()
+    config["KEEP"] = 'ALL'
+    cfg.set_config(config) # restore config in case we're on Windows to be thread save
    
-    # # Pseudo-label data and display clusters
-    # dataset = pd.read_csv("test_data/embeddings.csv", sep=";")
-    # xcnet.pseudo_label(dataset=dataset, embedder=embedder, train_df='train_data/train_dataset.csv', display=True, csv_filename='cluster.csv')
-    # # xcnet.pseudo_label(embedder=embedder, train_df='train_data/train_dataset.csv', display=True, csv_filename='cluster.csv')
+    # Pseudo-label data and display clusters
+    # xcnet.pseudo_label(embedder=embedder, train_df='train_data/train_dataset.csv', display=True, csv_filename='cluster.csv')
+    xcnet.pseudo_label(dataset=dataset, embedder=embedder, train_df='train_data/train_dataset.csv', display=True, csv_filename='cluster.csv')

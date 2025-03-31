@@ -57,7 +57,7 @@ PARAMS_XC: list[str] = [
     'grp:birds',                # Group to which the species belongs (birds, grasshoppers, bats) 
     # 'type:song',                # Type of the bird sound
     'len:1-100',                # Length of the recording (seconds)
-    'q:">C"',                   # Quality rating of the recording
+    'q:">D"',                   # Quality rating of the recording
     'area:america',             # Continental area: africa, america, asia, australia, europe
     # 'box:-5.681584,-71.740723,9.535749,-38.364258', # Geographical bounding box (min_lat, min_lon, max_lat, max_lon)
     # Radius search easily made using bboxfinder.com (coordinate format:"Lat / Lng" + draw a circle with radius ~ 500km, and copy map)
@@ -77,7 +77,7 @@ TRANSLATED_LABELS_PATH: str = "labels/V2.4"
 # Path to custom trained classifier
 # If None, no custom classifier will be used
 # Make sure to set the LABELS_FILE above accordingly
-CUSTOM_CLASSIFIER = "checkpoints/custom/XCNet.tflite"
+CUSTOM_CLASSIFIER = "checkpoints/custom/embedder.joblib"
 
 ##################
 # AUDIO SETTINGS #
