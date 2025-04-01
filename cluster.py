@@ -82,17 +82,17 @@ def estimate_parameters(X, config, n_components=2, metric='cosine'):
         # Compute pairwise distances separately to avoid error
         # https://github.com/scikit-learn-contrib/hdbscan/issues/69
         from sklearn.metrics import pairwise_distances
-        pw_distance = pairwise_distances(embedding, metric=metric, n_jobs=-1)
+        embedding = pairwise_distances(embedding, metric=metric, n_jobs=-1)
         
         cluster = hdbscan.HDBSCAN(
             min_cluster_size=min_points,
             min_samples=min_points,
             cluster_selection_epsilon=float(eps),
             metric='precomputed',
-            ).fit(pw_distance.astype('float64'))
+            ).fit(embedding.astype('float64'))
     
     # Evaluate clusters with DBCV score
-    dbcv = validity_index(X.astype(np.float64), cluster.labels_, metric=metric)
+    dbcv = validity_index(embedding.astype(np.float64), cluster.labels_, metric=metric)
     # Check if dbcv score is not a number
     if math.isnan(dbcv):
         dbcv = 0

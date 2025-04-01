@@ -6,7 +6,7 @@ from IPython import get_ipython
 from bokeh.plotting import figure, output_file, show
 from bokeh.models import ColumnDataSource, HoverTool
 from bokeh.transform import factor_cmap
-from bokeh.palettes import Category20
+from bokeh.palettes import Category20, viridis
 
 import config as cfg
 
@@ -94,11 +94,11 @@ def interactive_display(df_cluster, output_filename='interactive_scatter', save_
 
     # Get the unique cluster labels and try to get optimal color number
     unique_clusters = labels.unique().astype(str).tolist()
-    
-    try:
+
+    if len(unique_clusters) <= 20:
         colors = Category20[len(unique_clusters)]
-    except:
-        colors = Category20[20]
+    else:
+        colors = viridis(len(unique_clusters))
         
     mapper = factor_cmap(field_name='label', palette=colors, factors=unique_clusters)
 

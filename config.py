@@ -105,6 +105,7 @@ BANDPASS_FMAX: int = 15000
 #  CLUSTERING SETTINGS  #
 #########################
  
+N_COMPONENTS: str = 'auto'             # number of components to use for UMAP dimensionality reduction {integer or 'auto'}
 MIN_PTS: str = 'auto'                  # minimum number of samples to form a cluster {integer or 'auto'}
 EPS: str = "auto"                      # set the maximum distance between elements in a single clusters {float or 'auto'}
 METRIC: str = 'cosine'                 # metric to use when calculating distance between instances in a feature array.
@@ -177,7 +178,6 @@ OUTPUT_CSV_FILENAME: str = "BirdNET_CombinedTable.csv"
 # Whether to skip existing results in the output path
 # If set to False, existing files will not be overwritten
 SKIP_EXISTING_RESULTS: bool = False
-
 COMBINE_RESULTS: bool = False
 
 #####################
@@ -198,7 +198,7 @@ UPSAMPLING_RATIO: float = 0.0
 UPSAMPLING_MODE = "repeat"
 
 # Number of epochs to train for
-TRAIN_EPOCHS: int = 50
+TRAIN_EPOCHS: int = 1 # equivalent to TRAIN_EPOCHS * 10 sub-epochs
 
 # Batch size for training
 TRAIN_BATCH_SIZE: int = 32

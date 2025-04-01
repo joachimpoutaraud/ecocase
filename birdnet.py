@@ -375,15 +375,17 @@ class BirdNET():
         print("Loading training data...", flush=True)
         
         if cfg.TRAIN_DATA_PATH is None:    
-            x_train, y_train, labels = self._loadPseudoLabeledData(cfg.TRAIN_CACHE_MODE, cfg.TRAIN_CACHE_FILE, on_data_load_end)
+            x_train, y_train, categories = self._loadPseudoLabeledData(cfg.TRAIN_CACHE_MODE, cfg.TRAIN_CACHE_FILE, on_data_load_end)
         else:
-            x_train, y_train, labels = self._loadTrainingData(cfg.TRAIN_CACHE_MODE, cfg.TRAIN_CACHE_FILE, on_data_load_end)
+            x_train, y_train, categories = self._loadTrainingData(cfg.TRAIN_CACHE_MODE, cfg.TRAIN_CACHE_FILE, on_data_load_end)
             
         print(f"Done! Loaded {x_train.shape[0]} training samples and {y_train.shape[1]} labels.", flush=True)
               
+
         from umap.parametric_umap import ParametricUMAP       
         from tensorflow import keras
-        import joblib
+
+        print("\nBuilding embedder...", flush=True)
 
         # # Build the ConvNet encoder        
         # inputs = keras.Input(shape=(x_train.shape[1], 1))  # Input layer for embedding
@@ -395,8 +397,6 @@ class BirdNET():
         # x = keras.layers.GlobalAveragePooling1D()(x)  # Global pooling to reduce dimensionality
         # encoded_output = keras.layers.Dense(128, activation='relu')(x)  # Fully connected dense layer
         # encoder = keras.Model(inputs, encoded_output, name="ConvNet_Encoder") # Create the encoder model
-        
-        print("Building embedder...", flush=True)
 
         keras_fit_kwargs = {"callbacks": [
             keras.callbacks.EarlyStopping(
@@ -407,16 +407,21 @@ class BirdNET():
             )
         ]}
 
-        labels = np.argmax(y_train, axis=1)
         embedder = ParametricUMAP(
                                   batch_size=cfg.TRAIN_BATCH_SIZE, 
                                   random_state=cfg.RANDOM_SEED,
                                   metric=cfg.METRIC,
                                   keras_fit_kwargs=keras_fit_kwargs,
                                   verbose=self.verbose,
-                                  ).fit(x_train, labels)
+                                  )
         
-        # Save the model
-        joblib.dump(embedder, custom_classifier_path)
+        embedder.n_training_epochs = cfg.TRAIN_EPOCHS
+
+        # Fit ParametricUMAP model with pseudo-labeled data
+        pseudo_labels = np.argmax(y_train, axis=1)
+        embedder.fit(x_train, pseudo_labels)
+
+        # Save ParametricUMAP model
+        embedder.save(custom_classifier_path)
         
         return embedder

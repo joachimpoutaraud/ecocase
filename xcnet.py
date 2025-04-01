@@ -287,13 +287,13 @@ class XCNet(XenoCanto, BirdNET):
               
                 config = cfg.get_config()
 
-                print(f'Clustering {categories} species ({count+1}/{len(self.df.categories.unique())})...\n')
+                print(f'Clustering {count+1}/{len(self.df.categories.unique())}: {categories} species\n')
 
-                if cfg.MIN_PTS == 'auto' and len(df_single_categories) > 500:    
+                if cfg.N_COMPONENTS == 'auto' and len(df_single_categories) > 500:    
                     # Automatic estimation of the clustering algorithm parameters
                     #--------------------------------------------------------------------
                     if self.verbose:
-                        print(f'Automatic estimation of min_samples parameter...')
+                        print(f'Automatic estimation of the number of components to use for UMAP dimensionality reduction...')
                     
                     dbscan_parameters = []
                     best_score = None
@@ -325,15 +325,16 @@ class XCNet(XenoCanto, BirdNET):
                     min_samples = best_score[4]
                 
                 else:
-                    dbcv, n_components, cluster, eps, min_samples = estimate_parameters(X, config, metric=cfg.METRIC)
+                    dbcv, n_components, cluster, eps, min_samples = estimate_parameters(X, config, n_components=cfg.N_COMPONENTS, metric=cfg.METRIC)
                     
                 if self.verbose:                
-                    # Get the predicted labels and the number of clusters 
-                    clusters = len(np.unique(cluster.labels_[cluster.labels_ >= 0])) # remove noisy samples
-                    percentage = int(round(np.sum(cluster.labels_ >= 0) / X.shape[0], 2) * 100)  
-                    print(f'Data clustering percentage (without noise): {percentage}%')           
-                    print(f'Number of clusters found: {clusters} (n_components={n_components}, min_samples={min_samples}, eps={eps})')
-                    print(f'Density-Based Clustering Validation: {dbcv}\n')
+                    # Get the predicted labels and the number of clusters (excluding noise)
+                    #---------------------------------------------------
+                    clusters = len(np.unique(cluster.labels_[cluster.labels_ >= 0])) 
+                    noisy_percentage = int(round(np.sum(cluster.labels_ == -1) / X.shape[0], 2) * 100)            
+                    print(f'Number of clusters found (excluding noise): {clusters} (n_components={n_components}, min_samples={min_samples}, eps={eps})')
+                    print(f'Percentage of noise/outliers data: {noisy_percentage}%')
+                    print(f'Density-Based Clustering Validation: {round(dbcv,4)}\n') 
 
                 # Add the label found with the clustering
                 #-------------------------------------------------------
@@ -398,8 +399,8 @@ class XCNet(XenoCanto, BirdNET):
 
 if __name__ == "__main__":
     
-    # Create a Xeno-Canto network
-    xcnet = XCNet(save_path='train_data') # create 'train_data' folder to save data
+    ### TRAIN
+    xcnet = XCNet(save_path='train_data') # create Xeno-Canto network with 'train_data' folder to save data
     # Build Xeno-Canto dataset with Xeno-Canto parameters from the config file (config.py)
     xcnet.dataset(csv_filename="xc_dataset.csv") 
     # xcnet.df = pd.read_csv("train_data/train_dataset.csv", sep=";")
@@ -412,21 +413,24 @@ if __name__ == "__main__":
     cfg.set_config(config) # restore config in case we're on Windows to be thread save
     
     # Train model on top of BirdNET with Xeno-Canto dataset and save to disk
-    embedder = xcnet.train(model_output_path="checkpoints/custom/embedder.joblib", csv_filename='train_dataset.csv')
+    embedder = xcnet.train(model_output_path="checkpoints/custom", csv_filename='train_dataset.csv')
 
 
+    ### TEST
     xcnet = XCNet(save_path='test_data')
-    # Extract embeddings from audio files in 'test_data' folder with custom XCNet
-    # xcnet.embeddings(dataset='test_data', csv_filename='embeddings.csv') 
-    dataset = pd.read_csv("test_data/embeddings.csv", sep=";")
-    # import joblib
-    # embedder = joblib.load('checkpoints/custom/embedder.joblib')
-
     # We use specific clustering settings for extracting the clusters
     config = cfg.get_config()
     config["KEEP"] = 'ALL'
     cfg.set_config(config) # restore config in case we're on Windows to be thread save
-   
+
+    # Extract embeddings from audio files in 'test_data' folder with custom XCNet
+    xcnet.embeddings(dataset='test_data', csv_filename='embeddings.csv')    
     # Pseudo-label data and display clusters
-    # xcnet.pseudo_label(embedder=embedder, train_df='train_data/train_dataset.csv', display=True, csv_filename='cluster.csv')
-    xcnet.pseudo_label(dataset=dataset, embedder=embedder, train_df='train_data/train_dataset.csv', display=True, csv_filename='cluster.csv')
+    xcnet.pseudo_label(embedder=embedder, train_df='train_data/train_dataset.csv', display=True, csv_filename='cluster.csv')
+
+    # # from umap.parametric_umap import load_ParametricUMAP
+    # # embedder = load_ParametricUMAP('checkpoints/custom')
+    # # from keras.saving import load_model
+    # # embedder.parametric_model = load_model("checkpoints/custom/parametric_model.keras")
+    # dataset = pd.read_csv("test_data/embeddings.csv", sep=";")
+    # xcnet.pseudo_label(dataset=dataset, embedder=embedder, train_df='train_data/train_dataset.csv', display=True, csv_filename='cluster.csv')
