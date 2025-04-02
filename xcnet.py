@@ -46,7 +46,7 @@ class XCNet(XenoCanto, BirdNET):
             else:      
                 os.makedirs(self.save_path)         
         
-    def train(self, dataset=None, model_output_path=cfg.CUSTOM_CLASSIFIER, csv_filename=None):
+    def train(self, dataset=None, csv_filename=None):
         """
         Train custom classifier on top of BirdNET model with pseudo-labeled data requested from the Xeno-Canto database.
         By default the model is train using the training dataframe with pseudo-labeled data requested from Xeno-Canto.
@@ -54,7 +54,6 @@ class XCNet(XenoCanto, BirdNET):
         
         Args:
             dataset (str, optional): Path to dataset. This could be the path to a pandas DataFrame or audio recordings folder. Defaults to None (which corresponds to self.df). 
-            model_output_path (str, optional): Path to the fine-tuned model. Default is cfg.CUSTOM_CLASSIFIER.
             csv_filename (str, optional): The name of the csv file to save the dataset. Default is None.
             
         Returns:
@@ -93,12 +92,10 @@ class XCNet(XenoCanto, BirdNET):
             print('====================== TRAINING THE MODEL ======================\n')
         
         # Train model on top of BirdNET with pseudo-labeled data and save custom classifier
-        embedder = self.trainModel(custom_classifier_path=model_output_path) # trainModel() function is inherited from BirdNET() class        
-        filename, _ = os.path.splitext(model_output_path)
+        embedder = self.trainModel(custom_classifier_path=self.save_path) # trainModel() function is inherited from BirdNET() class        
         
-        # Update model and label file paths
-        cfg.MODEL_PATH = model_output_path
-        cfg.LABELS_FILE = f"{filename}_Labels.txt"
+        # Update model path
+        cfg.MODEL_PATH = self.save_path
         
         return embedder
         
@@ -413,7 +410,7 @@ if __name__ == "__main__":
     cfg.set_config(config) # restore config in case we're on Windows to be thread save
     
     # Train model on top of BirdNET with Xeno-Canto dataset and save to disk
-    embedder = xcnet.train(model_output_path="checkpoints/custom", csv_filename='train_dataset.csv')
+    embedder = xcnet.train(csv_filename='train_dataset.csv')
 
 
     ### TEST
@@ -429,8 +426,8 @@ if __name__ == "__main__":
     xcnet.pseudo_label(embedder=embedder, train_df='train_data/train_dataset.csv', display=True, csv_filename='cluster.csv')
 
     # # from umap.parametric_umap import load_ParametricUMAP
-    # # embedder = load_ParametricUMAP('checkpoints/custom')
+    # # embedder = load_ParametricUMAP('train_data')
     # # from keras.saving import load_model
-    # # embedder.parametric_model = load_model("checkpoints/custom/parametric_model.keras")
+    # # embedder.parametric_model = load_model("train_data/parametric_model.keras")
     # dataset = pd.read_csv("test_data/embeddings.csv", sep=";")
     # xcnet.pseudo_label(dataset=dataset, embedder=embedder, train_df='train_data/train_dataset.csv', display=True, csv_filename='cluster.csv')
