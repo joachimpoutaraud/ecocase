@@ -95,12 +95,10 @@ def interactive_display(df_cluster, output_filename='interactive_scatter', save_
     # Get the unique cluster labels and try to get optimal color number
     unique_clusters = labels.unique().astype(str).tolist()
 
-    if len(unique_clusters) in Category20:
+    try:
         colors = Category20[len(unique_clusters)]
-    elif len(unique_clusters) > 20:
-        colors = viridis(len(unique_clusters))
-    else:
-        colors = Category20[20]  # Fallback to a default palette size
+    except:
+        colors = Category20[20]
         
     mapper = factor_cmap(field_name='label', palette=colors, factors=unique_clusters)
 

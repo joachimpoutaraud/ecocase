@@ -6,10 +6,10 @@ import math
 import numpy as np
 
 import umap
-import hdbscan
-from hdbscan.validity import validity_index
 from sklearn.neighbors import NearestNeighbors
 from sklearn.cluster import DBSCAN
+import hdbscan
+from hdbscan.validity import validity_index
 from kneed import KneeLocator
 
 import config as cfg
@@ -23,12 +23,12 @@ def estimate_parameters(X, config, n_components=2, metric='cosine'):
     # Restore config in case we're on Windows to be thread save
     cfg.set_config(config)
     
-    # Fit and transform the UMAP model
-    reducer = umap.UMAP(n_components=n_components, metric=cfg.METRIC, random_state=cfg.RANDOM_SEED)
+    # Fit the UMAP model and transform data
+    reducer = umap.UMAP(n_components=n_components, metric=metric, random_state=cfg.RANDOM_SEED)
     embedding = reducer.fit_transform(X)
     
     if cfg.MIN_PTS == 'auto':      
-        # Determine the parameters for DBSCAN (Sander et al., 1998)
+        # Estimate min_points parameter (Sander et al., 1998)
         min_points = embedding.shape[1] * 2 - 1
  
     else:       
@@ -70,31 +70,32 @@ def estimate_parameters(X, config, n_components=2, metric='cosine'):
     else:
         eps = cfg.EPS
 
+    # Compute pairwise distance to avoid errors
+    # https://github.com/scikit-learn-contrib/hdbscan/issues/69
+    from sklearn.metrics import pairwise_distances
+    precomputed_distances = pairwise_distances(embedding, metric=metric)
+
     # Perform clustering from embedding array               
     if cfg.METHOD == "DBSCAN":                
         cluster = DBSCAN(
             min_samples=min_points,
             eps=eps, 
-            metric=metric,
-            ).fit(embedding)
+            metric='precomputed',
+            ).fit(precomputed_distances.astype('float64'))
         
     elif cfg.METHOD == "HDBSCAN":
-        # Compute pairwise distances separately to avoid error
-        # https://github.com/scikit-learn-contrib/hdbscan/issues/69
-        from sklearn.metrics import pairwise_distances
-        embedding = pairwise_distances(embedding, metric=metric, n_jobs=-1)
-        
         cluster = hdbscan.HDBSCAN(
             min_cluster_size=min_points,
             min_samples=min_points,
             cluster_selection_epsilon=float(eps),
             metric='precomputed',
-            ).fit(embedding.astype('float64'))
+            ).fit(precomputed_distances.astype('float64'))
     
     # Evaluate clusters with DBCV score
-    dbcv = validity_index(embedding.astype(np.float64), cluster.labels_, metric=metric)
-    # Check if dbcv score is not a number
+    dbcv = validity_index(precomputed_distances.astype('float64'), cluster.labels_, metric='precomputed', d=embedding.shape[1])
+
+    # Check if DBCV score is not a number
     if math.isnan(dbcv):
-        dbcv = 0
+        dbcv = 0.0
          
     return dbcv, n_components, cluster, eps, min_points

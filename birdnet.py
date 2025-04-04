@@ -388,15 +388,23 @@ class BirdNET():
         print("\nBuilding embedder...", flush=True)
 
         # # Build the ConvNet encoder        
-        # inputs = keras.Input(shape=(x_train.shape[1], 1))  # Input layer for embedding
-        # x = keras.layers.Conv1D(filters=64, kernel_size=3, activation='relu', padding='same')(inputs)
-        # x = keras.layers.MaxPooling1D(pool_size=2)(x)
-        # x = keras.layers.Conv1D(filters=128, kernel_size=3, activation='relu', padding='same')(x)
-        # x = keras.layers.MaxPooling1D(pool_size=2)(x)
-        # x = keras.layers.Conv1D(filters=256, kernel_size=3, activation='relu', padding='same')(x)
-        # x = keras.layers.GlobalAveragePooling1D()(x)  # Global pooling to reduce dimensionality
-        # encoded_output = keras.layers.Dense(128, activation='relu')(x)  # Fully connected dense layer
-        # encoder = keras.Model(inputs, encoded_output, name="ConvNet_Encoder") # Create the encoder model
+        # encoder = keras.Sequential([
+        #     keras.layers.Input(shape=(x_train.shape[1],)),
+        #     keras.layers.Flatten(),
+        #     keras.layers.Dense(units=512, activation="relu"),
+        #     keras.layers.BatchNormalization(),
+        #     keras.layers.Dropout(0.5),
+        #     keras.layers.Dense(units=256, activation="relu"),
+        #     keras.layers.BatchNormalization(),
+        #     keras.layers.Dropout(0.5),
+        #     keras.layers.Dense(units=128, activation="relu"),
+        #     keras.layers.BatchNormalization(),
+        #     keras.layers.Dropout(0.5),
+        #     keras.layers.Dense(units=64, activation="relu"),
+        #     keras.layers.BatchNormalization(),
+        #     keras.layers.Dropout(0.5),
+        #     keras.layers.Dense(units=2, name="z")
+        # ])
 
         keras_fit_kwargs = {"callbacks": [
             keras.callbacks.EarlyStopping(
@@ -419,7 +427,7 @@ class BirdNET():
 
         # Fit ParametricUMAP model with pseudo-labeled data
         pseudo_labels = np.argmax(y_train, axis=1)
-        embedder.fit(x_train, pseudo_labels)
+        embedder.fit(x_train, y=pseudo_labels)
 
         # Save ParametricUMAP model
         embedder.save(custom_classifier_path)

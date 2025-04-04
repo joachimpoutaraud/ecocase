@@ -260,67 +260,73 @@ class XCNet(XenoCanto, BirdNET):
                     # Prepare the embeddings of the training dataset
                     df_train = pd.read_csv(train_df, sep=";")
                     X1 = df_train.loc[:, df_train.columns.str.startswith("emb")].to_numpy()
-                    # Select landmarks indexes
-                    landmark_idx = list(np.random.choice(range(X1.shape[0]), int(X1.shape[0]/100), replace=False))
 
-                    # Add the landmark points to x2 for training.
+                    # from tensorflow import keras
+                    # def cosine_similarity_loss(y_true, y_pred):
+                    #     # Reshape y_true and y_pred to ensure they have the same rank.
+                    #     y_true = keras.backend.flatten(y_true)
+                    #     y_pred = keras.backend.flatten(y_pred)
+                    #     # Computes the cosine similarity between labels and predictions.
+                    #     # Relu activation ensures non-negative loss values.
+                    #     return keras.activations.relu(keras.losses.cosine_similarity(y_true, y_pred))
+                    
+                    # embedder.landmark_loss_fn = cosine_similarity_loss
+
+                    # Select 1 percent of the landmarks indexes randomly
+                    landmark_idx = list(np.random.choice(range(X1.shape[0]), int(X1.shape[0] * 0.01), replace=False))
+                    # Add the landmark points to X2 for training.
                     X2 = np.concatenate((X, X1[landmark_idx]))
-
                     # Make our landmarks vector, which is nan where we have no landmark information.
-                    embedder.transform(X) 
-
-                    landmarks = np.stack(
-                        [np.array([np.nan, np.nan])]*X.shape[0] + list(
-                            embedder.transform(
-                                X1[landmark_idx]
-                            )
-                        )
-                    )
+                    landmarks = np.stack([np.array([np.nan, np.nan])] * X.shape[0] + list(embedder.transform(X1[landmark_idx])))
 
                     # Set landmark loss weight and continue training our Parametric UMAP model.
                     embedder.landmark_loss_weight = 0.01
                     embedder.fit(X2, landmark_positions=landmarks)
-                    X = embedder.transform(X)
+                    embedder.transform(X)
               
                 config = cfg.get_config()
 
-                print(f'Clustering {count+1}/{len(self.df.categories.unique())}: {categories} species\n')
+                print(f'Clustering {count+1}/{len(self.df.categories.unique())} - {categories} species\n')
 
-                if cfg.N_COMPONENTS == 'auto' and len(df_single_categories) > 500:    
+                if cfg.N_COMPONENTS == 'auto':
                     # Automatic estimation of the clustering algorithm parameters
                     #--------------------------------------------------------------------
-                    if self.verbose:
-                        print(f'Automatic estimation of the number of components to use for UMAP dimensionality reduction...')
-                    
-                    dbscan_parameters = []
-                    best_score = None
                     n_components = 2
-                    
-                    # Multi-CPU process
-                    #-------------------                    
-                    with ProcessPoolExecutor(max_workers=cfg.CPU_THREADS-1) as executor:
-                        while True:
-                            future = executor.submit(estimate_parameters, X, config, n_components, cfg.METRIC)
-                            results = future.result()
-                            if not np.isnan(results[0]):  
-                                dbscan_parameters.append(results)
-                                
-                                # Check if the current score is lower than the previous best score
-                                if best_score is not None and results[0] < best_score[0]:
-                                    break
-                                
-                                # Update the best score
-                                best_score = results
-                            # Increment the number of components
-                            n_components += 1
+
+                    if len(df_single_categories) > 500:    
+                        if self.verbose:
+                            print(f'Automatic estimation of the number of components to use for UMAP dimensionality reduction...')
                         
-                    # Use the best score found
-                    dbcv = best_score[0]
-                    n_components = best_score[1]
-                    cluster = best_score[2] 
-                    eps = best_score[3]
-                    min_samples = best_score[4]
+                        dbscan_parameters = []
+                        best_score = None
+                        
+                        # Multi-CPU process
+                        #-------------------                    
+                        with ProcessPoolExecutor(max_workers=cfg.CPU_THREADS-1) as executor:
+                            while True:
+                                future = executor.submit(estimate_parameters, X, config, n_components, cfg.METRIC)
+                                results = future.result()
+                                if not np.isnan(results[0]):  
+                                    dbscan_parameters.append(results)
+                                    
+                                    # Check if the current score is lower than the previous best score
+                                    if best_score is not None and results[0] < best_score[0]:
+                                        break
+                                    
+                                    # Update the best score
+                                    best_score = results
+                                # Increment the number of components
+                                n_components += 1
+                            
+                        # Use the best score found
+                        dbcv = best_score[0]
+                        n_components = best_score[1]
+                        cluster = best_score[2] 
+                        eps = best_score[3]
+                        min_samples = best_score[4]
                 
+                    else:
+                        dbcv, n_components, cluster, eps, min_samples = estimate_parameters(X, config, n_components=n_components, metric=cfg.METRIC)
                 else:
                     dbcv, n_components, cluster, eps, min_samples = estimate_parameters(X, config, n_components=cfg.N_COMPONENTS, metric=cfg.METRIC)
                     
@@ -399,8 +405,8 @@ if __name__ == "__main__":
     ### TRAIN
     xcnet = XCNet(save_path='train_data') # create Xeno-Canto network with 'train_data' folder to save data
     # Build Xeno-Canto dataset with Xeno-Canto parameters from the config file (config.py)
-    xcnet.dataset(csv_filename="xc_dataset.csv") 
-    # xcnet.df = pd.read_csv("train_data/train_dataset.csv", sep=";")
+    # xcnet.dataset(csv_filename="xc_dataset.csv") 
+    xcnet.df = pd.read_csv("train_data/train_dataset.csv", sep=";")
 
     # We use specific clustering settings for building pseudo-labeled dataset
     config = cfg.get_config()
@@ -420,14 +426,29 @@ if __name__ == "__main__":
     config["KEEP"] = 'ALL'
     cfg.set_config(config) # restore config in case we're on Windows to be thread save
 
-    # Extract embeddings from audio files in 'test_data' folder with custom XCNet
-    xcnet.embeddings(dataset='test_data', csv_filename='embeddings.csv')    
-    # Pseudo-label data and display clusters
-    xcnet.pseudo_label(embedder=embedder, train_df='train_data/train_dataset.csv', display=True, csv_filename='cluster.csv')
+    # from umap.parametric_umap import load_ParametricUMAP
+    # from umap.parametric_umap import UMAPModel
+    # embedder = load_ParametricUMAP('train_data')
 
-    # # from umap.parametric_umap import load_ParametricUMAP
-    # # embedder = load_ParametricUMAP('train_data')
-    # # from keras.saving import load_model
-    # # embedder.parametric_model = load_model("train_data/parametric_model.keras")
-    # dataset = pd.read_csv("test_data/embeddings.csv", sep=";")
-    # xcnet.pseudo_label(dataset=dataset, embedder=embedder, train_df='train_data/train_dataset.csv', display=True, csv_filename='cluster.csv')
+    # import keras
+    # keras_fit_kwargs = {"callbacks": [
+    #     keras.callbacks.EarlyStopping(
+    #         monitor='loss',
+    #         min_delta=10**-2,
+    #         patience=10,
+    #         verbose=1,
+    #     )
+    # ]}
+    # embedder.keras_fit_kwargs = keras_fit_kwargs
+
+    # from tensorflow.keras.models import load_model
+    # from keras.saving import register_keras_serializable
+    # load_model("train_data/parametric_model.keras", custom_objects={"UMAPModel": UMAPModel})
+
+    # # Extract embeddings from audio files in 'test_data' folder with custom XCNet
+    # xcnet.embeddings(dataset='test_data', csv_filename='embeddings.csv')    
+    # # Pseudo-label data and display clusters
+    # xcnet.pseudo_label(embedder=embedder, train_df='train_data/train_dataset.csv', display=True, csv_filename='cluster.csv')
+    
+    dataset = pd.read_csv("test_data/embeddings.csv", sep=";")
+    xcnet.pseudo_label(dataset=dataset, embedder=embedder, train_df='train_data/train_dataset.csv', display=True, csv_filename='cluster.csv')

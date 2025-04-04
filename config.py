@@ -77,7 +77,7 @@ TRANSLATED_LABELS_PATH: str = "labels/V2.4"
 # Path to custom trained classifier
 # If None, no custom classifier will be used
 # Make sure to set the LABELS_FILE above accordingly
-CUSTOM_CLASSIFIER = "checkpoints/custom/embedder.joblib"
+CUSTOM_CLASSIFIER: str = "checkpoints/custom/embedder.keras"
 
 ##################
 # AUDIO SETTINGS #
@@ -90,7 +90,7 @@ SAMPLE_RATE: int = 48000
 # We're using 3-second chunks
 SIG_LENGTH: float = 3.0
 # Define overlap between consecutive chunks < 3.0
-SIG_OVERLAP: float = 0
+SIG_OVERLAP: float = 0.0
 # Define minimum length of audio chunk for prediction,
 # chunks shorter than 3 seconds will be padded with zeros
 SIG_MINLEN: float = 1.0
@@ -105,19 +105,21 @@ BANDPASS_FMAX: int = 15000
 #  CLUSTERING SETTINGS  #
 #########################
  
-N_COMPONENTS: str = 'auto'             # number of components to use for UMAP dimensionality reduction {integer or 'auto'}
-MIN_PTS: str = 'auto'                  # minimum number of samples to form a cluster {integer or 'auto'}
-EPS: str = "auto"                      # set the maximum distance between elements in a single clusters {float or 'auto'}
-METRIC: str = 'cosine'                 # metric to use when calculating distance between instances in a feature array.
-METHOD: str = "HDBSCAN"                # cluster method that allow some points beeing outside of a cluster {HDBSCAN, DBSCAN}
-KEEP: str = "ALL"                      # define if we want to keep all the clusters or only the biggest cluster, while the rest is discarded as noise {BIGGEST, ALL}
+N_COMPONENTS = 'auto'             # number of components to use for UMAP dimensionality reduction {int or 'auto'}
+
+# MIN_CLUSTER_SIZE: int = 30        # minimum size of clusters to be considered as a valid cluster
+MIN_PTS = 'auto'                  # number of samples in a neighborhood for a point to be considered as a core point {int or 'auto'}
+EPS = "auto"                      # maximum distance between two samples for one to be considered as in the neighborhood of the other {float or 'auto'}
+METRIC: str = 'cosine'            # metric to use when calculating distance between instances in a feature array.
+METHOD: str = "HDBSCAN"           # cluster method that allow some points beeing outside of a cluster {HDBSCAN, DBSCAN}
+KEEP: str = "ALL"                 # define if we want to keep all the clusters or only the biggest cluster, while the rest is discarded as noise {BIGGEST, ALL}
 
 #####################
 # METADATA SETTINGS #
 #####################
 
-LATITUDE: float = -1
-LONGITUDE: float = -1
+LATITUDE: float = -1.0
+LONGITUDE: float = -1.0
 WEEK: int = -1
 LOCATION_FILTER_THRESHOLD: float = 0.03
 
@@ -198,7 +200,7 @@ UPSAMPLING_RATIO: float = 0.0
 UPSAMPLING_MODE = "repeat"
 
 # Number of epochs to train for
-TRAIN_EPOCHS: int = 1 # equivalent to TRAIN_EPOCHS * 10 sub-epochs
+TRAIN_EPOCHS: int = 1 # equivalent to 10 * TRAIN_EPOCHS sub-epochs
 
 # Batch size for training
 TRAIN_BATCH_SIZE: int = 32
