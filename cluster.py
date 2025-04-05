@@ -91,8 +91,8 @@ def estimate_parameters(X, config, n_components=2, metric='cosine'):
             metric='precomputed',
             ).fit(precomputed_distances.astype('float64'))
     
-    # Evaluate clusters with DBCV score
-    dbcv = validity_index(precomputed_distances.astype('float64'), cluster.labels_, metric='precomputed', d=embedding.shape[1])
+    # Evaluate default BirdNET embeddings with DBCV score
+    dbcv = validity_index(X.astype('float64'), cluster.labels_, metric=metric)
 
     # Check if DBCV score is not a number
     if math.isnan(dbcv):

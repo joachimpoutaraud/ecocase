@@ -77,11 +77,10 @@ class XCNet(XenoCanto, BirdNET):
 
         # Build pseudo-labeled dataset if no training dataset is provided        
         if cfg.TRAIN_DATA_PATH is None:
-            
             # Check if dataset contains already pseudo labels or not
             if 'pseudo_label' not in self.df.columns:                
-                # Build a pseudo-labeled dataset with density-based clustering method       
-                self.df = self.embeddings() # extract embeddings from BirdNET model first           
+                # Extract embeddings from BirdNET model       
+                self.df = self.embeddings()         
                 # Find cluster and assign pseudo-labels
                 self.df = self.pseudo_label(csv_filename=csv_filename)
             
@@ -93,7 +92,6 @@ class XCNet(XenoCanto, BirdNET):
         
         # Train model on top of BirdNET with pseudo-labeled data and save custom classifier
         embedder = self.trainModel(custom_classifier_path=self.save_path) # trainModel() function is inherited from BirdNET() class        
-        
         # Update model path
         cfg.MODEL_PATH = self.save_path
         
@@ -293,7 +291,7 @@ class XCNet(XenoCanto, BirdNET):
                     #--------------------------------------------------------------------
                     n_components = 2
 
-                    if len(df_single_categories) > 500:    
+                    if len(df_single_categories) > 3:    
                         if self.verbose:
                             print(f'Automatic estimation of the number of components to use for UMAP dimensionality reduction...')
                         
@@ -404,9 +402,12 @@ if __name__ == "__main__":
     
     ### TRAIN
     xcnet = XCNet(save_path='train_data') # create Xeno-Canto network with 'train_data' folder to save data
+    
     # Build Xeno-Canto dataset with Xeno-Canto parameters from the config file (config.py)
-    # xcnet.dataset(csv_filename="xc_dataset.csv") 
-    xcnet.df = pd.read_csv("train_data/train_dataset.csv", sep=";")
+    xcnet.dataset(csv_filename="xc_dataset.csv") 
+    # Extract embeddings from BirdNET model
+    xcnet.embeddings(csv_filename='embeddings.csv')  
+    # xcnet.df = pd.read_csv("train_data/embeddings.csv", sep=";")
 
     # We use specific clustering settings for building pseudo-labeled dataset
     config = cfg.get_config()
@@ -415,21 +416,36 @@ if __name__ == "__main__":
     #     config["KEEP"] = 'ALL' # keep all clusters for repertoire analysis on an unique species
     cfg.set_config(config) # restore config in case we're on Windows to be thread save
     
+    # Find cluster and assign pseudo-labels
+    xcnet.pseudo_label(csv_filename='cluster.csv', display=True)
     # Train model on top of BirdNET with Xeno-Canto dataset and save to disk
     embedder = xcnet.train(csv_filename='train_dataset.csv')
 
 
-    ### TEST
-    xcnet = XCNet(save_path='test_data')
-    # We use specific clustering settings for extracting the clusters
-    config = cfg.get_config()
-    config["KEEP"] = 'ALL'
-    cfg.set_config(config) # restore config in case we're on Windows to be thread save
+    # ### TEST
+    # xcnet = XCNet(save_path='test_data')
+    # # We use specific clustering settings for extracting the clusters
+    # config = cfg.get_config()
+    # config["KEEP"] = 'ALL'
+    # cfg.set_config(config) # restore config in case we're on Windows to be thread save
 
+    # # Extract embeddings from audio files in 'test_data' folder with custom XCNet
+    # xcnet.embeddings(dataset='test_data', csv_filename='embeddings.csv')    
+    # # Pseudo-label data and display clusters
+    # xcnet.pseudo_label(embedder=embedder, train_df='train_data/train_dataset.csv', display=True, csv_filename='cluster.csv')
+    
+    # dataset = pd.read_csv("test_data/embeddings.csv", sep=";")
+    # xcnet.pseudo_label(dataset=dataset, embedder=embedder, train_df='train_data/train_dataset.csv', display=True, csv_filename='cluster.csv')
+    
+    
+    
+    
+    
+    
+    
     # from umap.parametric_umap import load_ParametricUMAP
     # from umap.parametric_umap import UMAPModel
     # embedder = load_ParametricUMAP('train_data')
-
     # import keras
     # keras_fit_kwargs = {"callbacks": [
     #     keras.callbacks.EarlyStopping(
@@ -440,15 +456,6 @@ if __name__ == "__main__":
     #     )
     # ]}
     # embedder.keras_fit_kwargs = keras_fit_kwargs
-
     # from tensorflow.keras.models import load_model
     # from keras.saving import register_keras_serializable
     # load_model("train_data/parametric_model.keras", custom_objects={"UMAPModel": UMAPModel})
-
-    # # Extract embeddings from audio files in 'test_data' folder with custom XCNet
-    # xcnet.embeddings(dataset='test_data', csv_filename='embeddings.csv')    
-    # # Pseudo-label data and display clusters
-    # xcnet.pseudo_label(embedder=embedder, train_df='train_data/train_dataset.csv', display=True, csv_filename='cluster.csv')
-    
-    dataset = pd.read_csv("test_data/embeddings.csv", sep=";")
-    xcnet.pseudo_label(dataset=dataset, embedder=embedder, train_df='train_data/train_dataset.csv', display=True, csv_filename='cluster.csv')

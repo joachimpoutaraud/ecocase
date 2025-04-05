@@ -429,7 +429,7 @@ class BirdNET():
         pseudo_labels = np.argmax(y_train, axis=1)
         embedder.fit(x_train, y=pseudo_labels)
 
-        # Save ParametricUMAP model
-        embedder.save(custom_classifier_path)
+        # # Save ParametricUMAP model
+        # embedder.save(custom_classifier_path)
         
         return embedder
