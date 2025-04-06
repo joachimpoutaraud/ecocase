@@ -11,9 +11,9 @@ RANDOM_SEED: int = 2025         # Fixed random seed
 #########################
 
 # Number of audio files to download for each species
-NUM_FILES: int = 50          
-# Xeno-Canto scientific species (e.g. ['Columba palumbus','Fringilla coelebs']). If None, species will only be requested according to the Xeno-Canto searching parameters
-# SPECIES_XC = None
+NUM_FILES: int = 100          
+# Xeno-Canto scientific species (e.g. ['Columba palumbus','Fringilla coelebs']) 
+# If None, species will be requested according to the Xeno-Canto searching parameters
 SPECIES_XC: list[str] = [
     # TINAMOUS
     'Tinamus major',
@@ -51,12 +51,11 @@ SPECIES_XC: list[str] = [
     'Nyctidromus albicollis',
     'Hydropsalis climacocerca'
 ]     
-# Xeno-Canto searching parameters
-PARAMS_XC: list[str] = [         
-    # More information here:    https://www.xeno-canto.org/help/search     
-    'grp:birds',                # Group to which the species belongs (birds, grasshoppers, bats) 
+# Xeno-Canto searching parameters (https://www.xeno-canto.org/help/search)
+PARAMS_XC: list[str] = [                 
+    'grp:birds',                # Group to which the species belongs (birds, bats, frogs, grasshoppers) 
     # 'type:song',                # Type of the bird sound
-    'len:1-100',                # Length of the recording (seconds)
+    'len:"<100"',               # Length of the recording (seconds)
     'q:">D"',                   # Quality rating of the recording
     'area:america',             # Continental area: africa, america, asia, australia, europe
     # 'box:-5.681584,-71.740723,9.535749,-38.364258', # Geographical bounding box (min_lat, min_lon, max_lat, max_lon)
@@ -98,21 +97,18 @@ SIG_MINLEN: float = 1.0
 SIG_FMIN: int = 0
 SIG_FMAX: int = 15000
 # Settings for bandpass filter
-BANDPASS_FMIN: int = 250
+BANDPASS_FMIN: int = 150
 BANDPASS_FMAX: int = 15000
 
 #########################
 #  CLUSTERING SETTINGS  #
 #########################
- 
-N_COMPONENTS = 'auto'             # number of components to use for UMAP dimensionality reduction {int or 'auto'}
 
-# MIN_CLUSTER_SIZE: int = 30        # minimum size of clusters to be considered as a valid cluster
 MIN_PTS = 'auto'                  # number of samples in a neighborhood for a point to be considered as a core point {int or 'auto'}
-EPS = "auto"                      # maximum distance between two samples for one to be considered as in the neighborhood of the other {float or 'auto'}
+EPS = 'auto'                      # maximum distance between two samples for one to be considered as in the neighborhood of the other {float or 'auto'}
 METRIC: str = 'cosine'            # metric to use when calculating distance between instances in a feature array.
-METHOD: str = "HDBSCAN"           # cluster method that allow some points beeing outside of a cluster {HDBSCAN, DBSCAN}
-KEEP: str = "ALL"                 # define if we want to keep all the clusters or only the biggest cluster, while the rest is discarded as noise {BIGGEST, ALL}
+METHOD: str = 'HDBSCAN'           # cluster method that allow some points beeing outside of a cluster {HDBSCAN, DBSCAN}
+KEEP: str = 'ALL'                 # define if we want to keep all the clusters or only the biggest cluster, while the rest is discarded as noise {BIGGEST, ALL}
 
 #####################
 # METADATA SETTINGS #
@@ -201,6 +197,9 @@ UPSAMPLING_MODE = "repeat"
 
 # Number of epochs to train for
 TRAIN_EPOCHS: int = 1 # equivalent to 10 * TRAIN_EPOCHS sub-epochs
+
+# Number of components to use for ParametricUMAP dimensionality reduction
+N_COMPONENTS: int = 2             
 
 # Batch size for training
 TRAIN_BATCH_SIZE: int = 32

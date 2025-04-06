@@ -385,8 +385,6 @@ class BirdNET():
         from umap.parametric_umap import ParametricUMAP       
         from tensorflow import keras
 
-        print("\nBuilding embedder...", flush=True)
-
         # # Build the ConvNet encoder        
         # encoder = keras.Sequential([
         #     keras.layers.Input(shape=(x_train.shape[1],)),

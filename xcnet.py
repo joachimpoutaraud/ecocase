@@ -178,6 +178,9 @@ class XCNet(XenoCanto, BirdNET):
             df_embeddings.reset_index(drop=True, inplace=True)
             self.df = df_embeddings
 
+        if self.verbose:
+            print(f'Number of audio chunks extracted: {len(self.df)}')
+
         if csv_filename is not None:
             if self.save_path is not None:
                 # Format save_path into Path
@@ -190,7 +193,7 @@ class XCNet(XenoCanto, BirdNET):
         return self.df
     
 
-    def pseudo_label(self, dataset=None, embedder=None, train_df=None, display=False, csv_filename=None):
+    def pseudo_label(self, dataset=None, embedder=None, train_df=None, display=False, thumbnails=True, noise=False, csv_filename=None):
         """
         Data pseudo-labeling with density-based clustering method (DBCM).
 
@@ -205,6 +208,8 @@ class XCNet(XenoCanto, BirdNET):
         Args:
             dataset (str, optional): Path to dataset. This could be the path to a pandas DataFrame or an audio recordings folder. Defaults to None.
             display (bool, optional): Whether to display the clusters or not. The default is False.
+            thumbnails (bool, optional): Whether to display thumbnails of the clusters or not. The default is True.
+            noise (bool, optional): Whether to display noise or not. The default is False.
             csv_filename (str, optional): The name of the csv file to save the pseudo-labeled data. Default is None.
 
         Returns:
@@ -254,7 +259,6 @@ class XCNet(XenoCanto, BirdNET):
                 X = df_single_categories.loc[:, df_single_categories.columns.str.startswith("emb")].to_numpy() 
 
                 if embedder is not None:
-
                     # Prepare the embeddings of the training dataset
                     df_train = pd.read_csv(train_df, sep=";")
                     X1 = df_train.loc[:, df_train.columns.str.startswith("emb")].to_numpy()
@@ -286,54 +290,52 @@ class XCNet(XenoCanto, BirdNET):
 
                 print(f'Clustering {count+1}/{len(self.df.categories.unique())} - {categories} species\n')
 
-                if cfg.N_COMPONENTS == 'auto':
+                if cfg.MIN_PTS == 'auto':
                     # Automatic estimation of the clustering algorithm parameters
                     #--------------------------------------------------------------------
-                    n_components = 2
-
-                    if len(df_single_categories) > 3:    
-                        if self.verbose:
-                            print(f'Automatic estimation of the number of components to use for UMAP dimensionality reduction...')
-                        
-                        dbscan_parameters = []
-                        best_score = None
-                        
-                        # Multi-CPU process
-                        #-------------------                    
-                        with ProcessPoolExecutor(max_workers=cfg.CPU_THREADS-1) as executor:
-                            while True:
-                                future = executor.submit(estimate_parameters, X, config, n_components, cfg.METRIC)
-                                results = future.result()
-                                if not np.isnan(results[0]):  
-                                    dbscan_parameters.append(results)
-                                    
-                                    # Check if the current score is lower than the previous best score
-                                    if best_score is not None and results[0] < best_score[0]:
-                                        break
-                                    
-                                    # Update the best score
-                                    best_score = results
-                                # Increment the number of components
-                                n_components += 1
-                            
-                        # Use the best score found
-                        dbcv = best_score[0]
-                        n_components = best_score[1]
-                        cluster = best_score[2] 
-                        eps = best_score[3]
-                        min_samples = best_score[4]
-                
-                    else:
-                        dbcv, n_components, cluster, eps, min_samples = estimate_parameters(X, config, n_components=n_components, metric=cfg.METRIC)
-                else:
-                    dbcv, n_components, cluster, eps, min_samples = estimate_parameters(X, config, n_components=cfg.N_COMPONENTS, metric=cfg.METRIC)
+                    min_samples = 3
+ 
+                    if self.verbose:
+                        print(f'Automatic estimation of the clustering algorithm parameters...')
                     
+                    dbscan_parameters = []
+                    best_score = None
+                    
+                    # Multi-CPU process
+                    #-------------------                    
+                    with ProcessPoolExecutor(max_workers=cfg.CPU_THREADS-1) as executor:
+                        while True:
+                            future = executor.submit(estimate_parameters, X, config, min_samples, cfg.METRIC)
+                            results = future.result()
+                            if not np.isnan(results[0]):  
+                                dbscan_parameters.append(results)
+                                
+                                # Check if the current score is lower than the previous best score
+                                if best_score is not None and results[0] < best_score[0]:
+                                    break
+                                # Update the best score
+                                best_score = results
+                            # Increment the number of components
+                            min_samples += 1
+                        
+                    # Use the best score found
+                    dbcv = best_score[0]
+                    cluster = best_score[1] 
+                    eps = best_score[2]
+                    min_samples = best_score[3]
+ 
+                else:       
+                    if cfg.MIN_PTS > 1:
+                        min_samples = round(cfg.MIN_PTS)
+                    else:
+                        min_samples = 3 
+
                 if self.verbose:                
                     # Get the predicted labels and the number of clusters (excluding noise)
                     #---------------------------------------------------
                     clusters = len(np.unique(cluster.labels_[cluster.labels_ >= 0])) 
                     noisy_percentage = int(round(np.sum(cluster.labels_ == -1) / X.shape[0], 2) * 100)            
-                    print(f'Number of clusters found (excluding noise): {clusters} (n_components={n_components}, min_samples={min_samples}, eps={eps})')
+                    print(f'Number of clusters found (excluding noise): {clusters} (min_samples={min_samples}, eps={eps})')
                     print(f'Percentage of noise/outliers data: {noisy_percentage}%')
                     print(f'Density-Based Clustering Validation: {round(dbcv,4)}\n') 
 
@@ -379,7 +381,7 @@ class XCNet(XenoCanto, BirdNET):
                         save_path = Path(self.save_path)
                         
                     from display import interactive_display
-                    interactive_display(self.df, output_filename=categories, save_path=save_path, thumbnails=True, noise=False)
+                    interactive_display(self.df, output_filename=categories, save_path=save_path, thumbnails=thumbnails, noise=noise)
                 
             # Increment
             count += 1
@@ -402,46 +404,40 @@ if __name__ == "__main__":
     
     ### TRAIN
     xcnet = XCNet(save_path='train_data') # create Xeno-Canto network with 'train_data' folder to save data
+    # We use specific clustering settings for building pseudo-labeled dataset
+    config = cfg.get_config()
+    config["KEEP"] = 'BIGGEST'
+    cfg.set_config(config) # restore config in case we're on Windows to be thread save
     
     # Build Xeno-Canto dataset with Xeno-Canto parameters from the config file (config.py)
     xcnet.dataset(csv_filename="xc_dataset.csv") 
     # Extract embeddings from BirdNET model
-    xcnet.embeddings(csv_filename='embeddings.csv')  
-    # xcnet.df = pd.read_csv("train_data/embeddings.csv", sep=";")
-
-    # We use specific clustering settings for building pseudo-labeled dataset
-    config = cfg.get_config()
-    config["KEEP"] = 'BIGGEST'
-    # if len(xcnet.df.categories.unique()) == 1: 
-    #     config["KEEP"] = 'ALL' # keep all clusters for repertoire analysis on an unique species
-    cfg.set_config(config) # restore config in case we're on Windows to be thread save
-    
+    xcnet.embeddings(csv_filename='embeddings.csv') # dataset="train_data/embeddings.csv",   
     # Find cluster and assign pseudo-labels
-    xcnet.pseudo_label(csv_filename='cluster.csv', display=True)
+    xcnet.pseudo_label(csv_filename='cluster.csv', display=True, thumbnails=True, noise=False)
     # Train model on top of BirdNET with Xeno-Canto dataset and save to disk
     embedder = xcnet.train(csv_filename='train_dataset.csv')
 
 
-    # ### TEST
-    # xcnet = XCNet(save_path='test_data')
-    # # We use specific clustering settings for extracting the clusters
-    # config = cfg.get_config()
-    # config["KEEP"] = 'ALL'
-    # cfg.set_config(config) # restore config in case we're on Windows to be thread save
+    ### TEST
+    xcnet = XCNet(save_path='test_data')
+    # We use specific clustering settings for extracting the clusters
+    config = cfg.get_config()
+    config["KEEP"] = 'ALL'
+    cfg.set_config(config) # restore config in case we're on Windows to be thread save
 
-    # # Extract embeddings from audio files in 'test_data' folder with custom XCNet
-    # xcnet.embeddings(dataset='test_data', csv_filename='embeddings.csv')    
-    # # Pseudo-label data and display clusters
-    # xcnet.pseudo_label(embedder=embedder, train_df='train_data/train_dataset.csv', display=True, csv_filename='cluster.csv')
-    
-    # dataset = pd.read_csv("test_data/embeddings.csv", sep=";")
-    # xcnet.pseudo_label(dataset=dataset, embedder=embedder, train_df='train_data/train_dataset.csv', display=True, csv_filename='cluster.csv')
+    # Extract embeddings from audio files in 'test_data' folder with custom XCNet
+    xcnet.embeddings(dataset='test_data', csv_filename='embeddings.csv') # dataset="test_data/embeddings.csv",   
+    # Pseudo-label data and display clusters
+    xcnet.pseudo_label(embedder=embedder, train_df='train_data/train_dataset.csv', display=True, csv_filename='cluster.csv')
     
     
     
     
     
     
+    # if len(xcnet.df.categories.unique()) == 1: 
+    #     config["KEEP"] = 'ALL' # keep all clusters for repertoire analysis on an unique species
     
     # from umap.parametric_umap import load_ParametricUMAP
     # from umap.parametric_umap import UMAPModel

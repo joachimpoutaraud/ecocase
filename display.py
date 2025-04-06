@@ -84,6 +84,8 @@ def interactive_display(df_cluster, output_filename='interactive_scatter', save_
     
     # Prepare the embeddings    
     X = df_cluster.loc[:, df_cluster.columns.str.startswith("emb")].to_numpy()
+    # Remove NaN values from the dataset
+    X = np.nan_to_num(X)
     # Get all the cluster labels and filenames
     labels = df_cluster['cluster_number']
     
