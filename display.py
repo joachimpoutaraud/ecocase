@@ -6,7 +6,7 @@ from IPython import get_ipython
 from bokeh.plotting import figure, output_file, show
 from bokeh.models import ColumnDataSource, HoverTool
 from bokeh.transform import factor_cmap
-from bokeh.palettes import Category20, viridis
+from bokeh.palettes import Category20
 
 import config as cfg
 
@@ -68,7 +68,7 @@ def create_thumbnails(row, save_path, encode=False):
         return f"{os.path.join(save_path, str(row.categories) + str(row.start))}.png", f"{os.path.join(save_path, str(row.categories) + str(row.start))}.wav"
 
 
-def interactive_display(df_cluster, output_filename='interactive_scatter', save_path=None, thumbnails=True, encode=False, noise=False, frame_width=1000, frame_height=600, point_size=10):  
+def interactive_display(df_cluster, X=None, output_filename='interactive_scatter', save_path=None, thumbnails=True, encode=False, noise=False, frame_width=1000, frame_height=600, point_size=10):  
     
     # Check if dataset is a path to a dataframe, audio file or folder
     if type(df_cluster) == str:
@@ -78,24 +78,27 @@ def interactive_display(df_cluster, output_filename='interactive_scatter', save_
         if ext == ".csv": 
             df_cluster = pd.read_csv(df_cluster, sep=";")
     
-    if not noise:  
-        # Remove noise points from display
-        df_cluster = df_cluster[df_cluster['pseudo_label'] > 0]
-    
-    # Prepare the embeddings    
-    X = df_cluster.loc[:, df_cluster.columns.str.startswith("emb")].to_numpy()
-    # Remove NaN values from the dataset
+    if X is None:
+        # Prepare the embeddings    
+        X = df_cluster.loc[:, df_cluster.columns.str.startswith("emb")].to_numpy()
+        # Fit the UMAP model and transform the data
+        reducer = umap.UMAP(n_components=2, metric=cfg.METRIC, random_state=cfg.RANDOM_SEED)
+        X = reducer.fit_transform(np.nan_to_num(X))
+
+    # Remove potential NaN values from the dataset
     X = np.nan_to_num(X)
+    
+    if not noise:
+        # Filter out noise points from X and df_cluster
+        noise_mask = df_cluster['pseudo_label'] > 0
+        df_cluster = df_cluster[noise_mask]
+        X = X[noise_mask]
+    
     # Get all the cluster labels and filenames
     labels = df_cluster['cluster_number']
-    
-    # Fit the UMAP model
-    reducer = umap.UMAP(n_components=2, metric=cfg.METRIC, random_state=cfg.RANDOM_SEED)
-    embedding = reducer.fit_transform(X)
-    x, y = embedding[:, 0], embedding[:, 1]
-
     # Get the unique cluster labels and try to get optimal color number
     unique_clusters = labels.unique().astype(str).tolist()
+    x, y = X[:, 0], X[:, 1]
 
     try:
         colors = Category20[len(unique_clusters)]

@@ -11,7 +11,7 @@ RANDOM_SEED: int = 2025         # Fixed random seed
 #########################
 
 # Number of audio files to download for each species
-NUM_FILES: int = 100          
+NUM_FILES: int = 50          
 # Xeno-Canto scientific species (e.g. ['Columba palumbus','Fringilla coelebs']) 
 # If None, species will be requested according to the Xeno-Canto searching parameters
 SPECIES_XC: list[str] = [
@@ -196,7 +196,7 @@ UPSAMPLING_RATIO: float = 0.0
 UPSAMPLING_MODE = "repeat"
 
 # Number of epochs to train for
-TRAIN_EPOCHS: int = 1 # equivalent to 10 * TRAIN_EPOCHS sub-epochs
+TRAIN_EPOCHS: int = 10 # equivalent to 10 * TRAIN_EPOCHS sub-epochs
 
 # Number of components to use for ParametricUMAP dimensionality reduction
 N_COMPONENTS: int = 2             

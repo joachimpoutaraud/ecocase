@@ -261,18 +261,19 @@ class XCNet(XenoCanto, BirdNET):
                 if embedder is not None:
                     # Prepare the embeddings of the training dataset
                     df_train = pd.read_csv(train_df, sep=";")
+                    df_train = df_train[df_train.pseudo_label > 0]
                     X1 = df_train.loc[:, df_train.columns.str.startswith("emb")].to_numpy()
 
-                    # from tensorflow import keras
-                    # def cosine_similarity_loss(y_true, y_pred):
-                    #     # Reshape y_true and y_pred to ensure they have the same rank.
-                    #     y_true = keras.backend.flatten(y_true)
-                    #     y_pred = keras.backend.flatten(y_pred)
-                    #     # Computes the cosine similarity between labels and predictions.
-                    #     # Relu activation ensures non-negative loss values.
-                    #     return keras.activations.relu(keras.losses.cosine_similarity(y_true, y_pred))
+                    from tensorflow import keras
+                    def kullback_leibler_divergence_loss(y_true, y_pred):
+                        # Reshape y_true and y_pred to ensure they have the same rank.
+                        y_true = keras.backend.flatten(y_true)
+                        y_pred = keras.backend.flatten(y_pred)
+                        # Computes the cosine similarity between labels and predictions.
+                        # Relu activation ensures non-negative loss values.
+                        return keras.activations.relu(keras.losses.kullback_leibler_divergence(y_true, y_pred)) # cosine_similarity?
                     
-                    # embedder.landmark_loss_fn = cosine_similarity_loss
+                    embedder.landmark_loss_fn = kullback_leibler_divergence_loss
 
                     # Select 1 percent of the landmarks indexes randomly
                     landmark_idx = list(np.random.choice(range(X1.shape[0]), int(X1.shape[0] * 0.01), replace=False))
@@ -284,7 +285,8 @@ class XCNet(XenoCanto, BirdNET):
                     # Set landmark loss weight and continue training our Parametric UMAP model.
                     embedder.landmark_loss_weight = 0.01
                     embedder.fit(X2, landmark_positions=landmarks)
-                    embedder.transform(X)
+                    # Transform the data with the trained model
+                    X = embedder.transform(X)
               
                 config = cfg.get_config()
 
@@ -334,7 +336,7 @@ class XCNet(XenoCanto, BirdNET):
                     # Get the predicted labels and the number of clusters (excluding noise)
                     #---------------------------------------------------
                     clusters = len(np.unique(cluster.labels_[cluster.labels_ >= 0])) 
-                    noisy_percentage = int(round(np.sum(cluster.labels_ == -1) / X.shape[0], 2) * 100)            
+                    noisy_percentage = round(np.sum(cluster.labels_ == -1) / X.shape[0], 2) * 100           
                     print(f'Number of clusters found (excluding noise): {clusters} (min_samples={min_samples}, eps={eps})')
                     print(f'Percentage of noise/outliers data: {noisy_percentage}%')
                     print(f'Density-Based Clustering Validation: {round(dbcv,4)}\n') 
@@ -381,7 +383,7 @@ class XCNet(XenoCanto, BirdNET):
                         save_path = Path(self.save_path)
                         
                     from display import interactive_display
-                    interactive_display(self.df, output_filename=categories, save_path=save_path, thumbnails=thumbnails, noise=noise)
+                    interactive_display(self.df, X=X, output_filename=categories, save_path=save_path, thumbnails=thumbnails, noise=noise)
                 
             # Increment
             count += 1
@@ -404,37 +406,46 @@ if __name__ == "__main__":
     
     ### TRAIN
     xcnet = XCNet(save_path='train_data') # create Xeno-Canto network with 'train_data' folder to save data
+
     # We use specific clustering settings for building pseudo-labeled dataset
     config = cfg.get_config()
     config["KEEP"] = 'BIGGEST'
     cfg.set_config(config) # restore config in case we're on Windows to be thread save
-    
-    # Build Xeno-Canto dataset with Xeno-Canto parameters from the config file (config.py)
-    xcnet.dataset(csv_filename="xc_dataset.csv") 
-    # Extract embeddings from BirdNET model
-    xcnet.embeddings(csv_filename='embeddings.csv') # dataset="train_data/embeddings.csv",   
-    # Find cluster and assign pseudo-labels
-    xcnet.pseudo_label(csv_filename='cluster.csv', display=True, thumbnails=True, noise=False)
-    # Train model on top of BirdNET with Xeno-Canto dataset and save to disk
-    embedder = xcnet.train(csv_filename='train_dataset.csv')
+
+    # # Build Xeno-Canto dataset with Xeno-Canto parameters from the config file (config.py)
+    # xcnet.dataset(csv_filename="xc_dataset.csv")     
+    # # Extract embeddings from BirdNET model
+    # xcnet.embeddings(csv_filename='embeddings.csv')   
+    # # Find cluster and assign pseudo-labels
+    # xcnet.pseudo_label(csv_filename='pseudo_label.csv') # dataset="train_data/embeddings.csv", display=True, thumbnails=True, noise=False
+
+    # Train ParametricUMAP model with Xeno-Canto dataset 
+    embedder = xcnet.train(dataset="train_data/pseudo_label.csv")
 
 
     ### TEST
     xcnet = XCNet(save_path='test_data')
+
     # We use specific clustering settings for extracting the clusters
     config = cfg.get_config()
     config["KEEP"] = 'ALL'
     cfg.set_config(config) # restore config in case we're on Windows to be thread save
 
     # Extract embeddings from audio files in 'test_data' folder with custom XCNet
-    xcnet.embeddings(dataset='test_data', csv_filename='embeddings.csv') # dataset="test_data/embeddings.csv",   
+    # xcnet.embeddings(dataset='test_data', csv_filename='embeddings.csv')    
     # Pseudo-label data and display clusters
-    xcnet.pseudo_label(embedder=embedder, train_df='train_data/train_dataset.csv', display=True, csv_filename='cluster.csv')
+    xcnet.pseudo_label(embedder=embedder, train_df='train_data/pseudo_label.csv', display=True, csv_filename='pseudo_label.csv', dataset="test_data/embeddings.csv")
     
     
     
+    # xcnet.pseudo_label(dataset="test_data/embeddings.csv", csv_filename='pseudo_label.csv', display=True)
     
     
+    
+
+
+
+
     
     # if len(xcnet.df.categories.unique()) == 1: 
     #     config["KEEP"] = 'ALL' # keep all clusters for repertoire analysis on an unique species

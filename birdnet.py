@@ -379,30 +379,42 @@ class BirdNET():
         else:
             x_train, y_train, categories = self._loadTrainingData(cfg.TRAIN_CACHE_MODE, cfg.TRAIN_CACHE_FILE, on_data_load_end)
             
-        print(f"Done! Loaded {x_train.shape[0]} training samples and {y_train.shape[1]} labels.", flush=True)
+        print(f"Done! Loaded {x_train.shape[0]} training samples and {y_train.shape[1]} labels.\n", flush=True)
               
 
         from umap.parametric_umap import ParametricUMAP       
         from tensorflow import keras
 
-        # # Build the ConvNet encoder        
-        # encoder = keras.Sequential([
-        #     keras.layers.Input(shape=(x_train.shape[1],)),
-        #     keras.layers.Flatten(),
-        #     keras.layers.Dense(units=512, activation="relu"),
-        #     keras.layers.BatchNormalization(),
-        #     keras.layers.Dropout(0.5),
-        #     keras.layers.Dense(units=256, activation="relu"),
-        #     keras.layers.BatchNormalization(),
-        #     keras.layers.Dropout(0.5),
-        #     keras.layers.Dense(units=128, activation="relu"),
-        #     keras.layers.BatchNormalization(),
-        #     keras.layers.Dropout(0.5),
-        #     keras.layers.Dense(units=64, activation="relu"),
-        #     keras.layers.BatchNormalization(),
-        #     keras.layers.Dropout(0.5),
-        #     keras.layers.Dense(units=2, name="z")
-        # ])
+        # Build the ConvNet encoder        
+        encoder = keras.Sequential([
+            keras.layers.Input(shape=(x_train.shape[1],)),
+            keras.layers.Flatten(),
+            keras.layers.Dense(units=512, activation="relu"),
+            keras.layers.BatchNormalization(),
+            keras.layers.Dropout(0.5),
+            keras.layers.Dense(units=256, activation="relu"),
+            keras.layers.BatchNormalization(),
+            keras.layers.Dropout(0.5),
+            keras.layers.Dense(units=128, activation="relu"),
+            keras.layers.BatchNormalization(),
+            keras.layers.Dropout(0.5),
+            keras.layers.Dense(units=64, activation="relu"),
+            keras.layers.BatchNormalization(),
+            keras.layers.Dropout(0.5),
+            keras.layers.Dense(units=32, activation="relu"),
+            keras.layers.BatchNormalization(),
+            keras.layers.Dropout(0.5),
+            keras.layers.Dense(units=16, activation="relu"),
+            keras.layers.BatchNormalization(),
+            keras.layers.Dropout(0.5),
+            keras.layers.Dense(units=8, activation="relu"),
+            keras.layers.BatchNormalization(),
+            keras.layers.Dropout(0.5),
+            keras.layers.Dense(units=4, activation="relu"),
+            keras.layers.BatchNormalization(),
+            keras.layers.Dropout(0.5),
+            keras.layers.Dense(units=2, name="z")
+        ])
 
         keras_fit_kwargs = {"callbacks": [
             keras.callbacks.EarlyStopping(
@@ -414,6 +426,7 @@ class BirdNET():
         ]}
 
         embedder = ParametricUMAP(
+                                  encoder=encoder, 
                                   batch_size=cfg.TRAIN_BATCH_SIZE, 
                                   random_state=cfg.RANDOM_SEED,
                                   metric=cfg.METRIC,
