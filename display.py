@@ -81,18 +81,20 @@ def interactive_display(df_cluster, X=None, output_filename='interactive_scatter
     if X is None:
         # Prepare the embeddings    
         X = df_cluster.loc[:, df_cluster.columns.str.startswith("emb")].to_numpy()
-        # Fit the UMAP model and transform the data
-        reducer = umap.UMAP(n_components=2, metric=cfg.METRIC, random_state=cfg.RANDOM_SEED)
-        X = reducer.fit_transform(np.nan_to_num(X))
 
     # Remove potential NaN values from the dataset
     X = np.nan_to_num(X)
-    
+        
     if not noise:
-        # Filter out noise points from X and df_cluster
-        noise_mask = df_cluster['pseudo_label'] > 0
+        # Keep only data pseudo-labeled as signal 
+        noise_mask = df_cluster['pseudo_label'] == 1
         df_cluster = df_cluster[noise_mask]
         X = X[noise_mask]
+
+    if X.shape[1] > 2:
+        # Fit the UMAP model and transform the data
+        reducer = umap.UMAP(n_components=2, metric=cfg.METRIC, random_state=cfg.RANDOM_SEED)
+        X = reducer.fit_transform(X)
     
     # Get all the cluster labels and filenames
     labels = df_cluster['cluster_number']

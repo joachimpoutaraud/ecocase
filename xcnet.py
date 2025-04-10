@@ -83,9 +83,6 @@ class XCNet(XenoCanto, BirdNET):
                 self.df = self.embeddings()         
                 # Find cluster and assign pseudo-labels
                 self.df = self.pseudo_label(csv_filename=csv_filename)
-            
-            # Keep only data pseudo-labeled as signal
-            self.df = self.df[self.df.pseudo_label > 0]
         
         if self.verbose:
             print('====================== TRAINING THE MODEL ======================\n')
@@ -261,7 +258,8 @@ class XCNet(XenoCanto, BirdNET):
                 if embedder is not None:
                     # Prepare the embeddings of the training dataset
                     df_train = pd.read_csv(train_df, sep=";")
-                    df_train = df_train[df_train.pseudo_label > 0]
+                    # Keep only data pseudo-labeled as signal and reset index
+                    df_train = df_train[df_train.pseudo_label == 1].reset_index(drop=True)
                     X1 = df_train.loc[:, df_train.columns.str.startswith("emb")].to_numpy()
 
                     from tensorflow import keras
@@ -271,12 +269,21 @@ class XCNet(XenoCanto, BirdNET):
                         y_pred = keras.backend.flatten(y_pred)
                         # Computes the cosine similarity between labels and predictions.
                         # Relu activation ensures non-negative loss values.
-                        return keras.activations.relu(keras.losses.kullback_leibler_divergence(y_true, y_pred)) # cosine_similarity?
+                        # return keras.activations.relu(keras.losses.cosine_similarity(y_true, y_pred))
+                        return keras.activations.relu(keras.losses.kullback_leibler_divergence(y_true, y_pred))
                     
                     embedder.landmark_loss_fn = kullback_leibler_divergence_loss
 
-                    # Select 1 percent of the landmarks indexes randomly
-                    landmark_idx = list(np.random.choice(range(X1.shape[0]), int(X1.shape[0] * 0.01), replace=False))
+                    # Select 1 percent of the total dataset uniformly distributed across all categories
+                    total_landmarks = max(1, int(len(df_train) * 0.01))  # Ensure at least one landmark in total
+                    landmark_idx = []
+                    # Randomly select landmarks from each category in the training dataset
+                    for category in df_train['categories'].unique():
+                        category_indices = df_train[df_train['categories'] == category].index
+                        category_proportion = len(category_indices) / len(df_train)
+                        num_landmarks = max(1, int(total_landmarks * category_proportion))  # Proportional allocation
+                        landmark_idx.extend(np.random.choice(category_indices, num_landmarks, replace=False))
+                    
                     # Add the landmark points to X2 for training.
                     X2 = np.concatenate((X, X1[landmark_idx]))
                     # Make our landmarks vector, which is nan where we have no landmark information.
@@ -284,7 +291,7 @@ class XCNet(XenoCanto, BirdNET):
 
                     # Set landmark loss weight and continue training our Parametric UMAP model.
                     embedder.landmark_loss_weight = 0.01
-                    embedder.fit(X2, landmark_positions=landmarks)
+                    embedder.fit(X2.astype('float64'), landmark_positions=landmarks.astype('float64'))
                     # Transform the data with the trained model
                     X = embedder.transform(X)
               

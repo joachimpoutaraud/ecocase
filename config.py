@@ -196,7 +196,7 @@ UPSAMPLING_RATIO: float = 0.0
 UPSAMPLING_MODE = "repeat"
 
 # Number of epochs to train for
-TRAIN_EPOCHS: int = 10 # equivalent to 10 * TRAIN_EPOCHS sub-epochs
+TRAIN_EPOCHS: int = 1 # equivalent to 10 * TRAIN_EPOCHS sub-epochs
 
 # Number of components to use for ParametricUMAP dimensionality reduction
 N_COMPONENTS: int = 2             

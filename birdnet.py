@@ -327,6 +327,9 @@ class BirdNET():
             else:
                 print(f"\t...cache file not found: {cache_file}", flush=True)
 
+        # Keep only data pseudo-labeled as signal and reset index
+        self.df = self.df[self.df.pseudo_label > 0].reset_index(drop=True)
+
         # Get the unique categories
         categories = self.df.categories.unique()
         
@@ -389,32 +392,49 @@ class BirdNET():
         encoder = keras.Sequential([
             keras.layers.Input(shape=(x_train.shape[1],)),
             keras.layers.Flatten(),
-            keras.layers.Dense(units=512, activation="relu"),
-            keras.layers.BatchNormalization(),
-            keras.layers.Dropout(0.5),
             keras.layers.Dense(units=256, activation="relu"),
             keras.layers.BatchNormalization(),
-            keras.layers.Dropout(0.5),
-            keras.layers.Dense(units=128, activation="relu"),
-            keras.layers.BatchNormalization(),
-            keras.layers.Dropout(0.5),
+            keras.layers.Dropout(0.3),
             keras.layers.Dense(units=64, activation="relu"),
             keras.layers.BatchNormalization(),
-            keras.layers.Dropout(0.5),
-            keras.layers.Dense(units=32, activation="relu"),
-            keras.layers.BatchNormalization(),
-            keras.layers.Dropout(0.5),
+            keras.layers.Dropout(0.3),
             keras.layers.Dense(units=16, activation="relu"),
             keras.layers.BatchNormalization(),
-            keras.layers.Dropout(0.5),
-            keras.layers.Dense(units=8, activation="relu"),
-            keras.layers.BatchNormalization(),
-            keras.layers.Dropout(0.5),
-            keras.layers.Dense(units=4, activation="relu"),
-            keras.layers.BatchNormalization(),
-            keras.layers.Dropout(0.5),
+            keras.layers.Dropout(0.3),
+            # keras.layers.Dense(units=64, activation="relu"),
+            # keras.layers.BatchNormalization(),
+            # keras.layers.Dropout(0.3),
+            # keras.layers.Dense(units=32, activation="relu"),
+            # keras.layers.BatchNormalization(),
+            # keras.layers.Dropout(0.3),
+            # keras.layers.Dense(units=16, activation="relu"),
+            # keras.layers.BatchNormalization(),
+            # keras.layers.Dropout(0.3),
+            # keras.layers.Dense(units=8, activation="relu"),
+            # keras.layers.BatchNormalization(),
+            # keras.layers.Dropout(0.3),
+            # keras.layers.Dense(units=4, activation="relu"),
+            # keras.layers.BatchNormalization(),
+            # keras.layers.Dropout(0.3),
             keras.layers.Dense(units=2, name="z")
         ])
+
+        # decoder = keras.Sequential([
+        #         keras.layers.Input(shape=(2,)),
+        #         keras.layers.BatchNormalization(),
+        #         keras.layers.Dropout(0.3),
+        #         keras.layers.Dense(units=16, activation="relu"),
+        #         keras.layers.BatchNormalization(),
+        #         keras.layers.Dropout(0.3),
+        #         keras.layers.Dense(units=64, activation="relu"),
+        #         keras.layers.BatchNormalization(),
+        #         keras.layers.Dropout(0.3),
+        #         keras.layers.Dense(units=256, activation="relu"),
+        #         keras.layers.BatchNormalization(),
+        #         keras.layers.Dropout(0.3),
+        #         keras.layers.Dense(units=np.prod((x_train.shape[1],)), name="recon", activation=None),
+        #         keras.layers.Reshape((x_train.shape[1],)),
+        # ])
 
         keras_fit_kwargs = {"callbacks": [
             keras.callbacks.EarlyStopping(
@@ -427,6 +447,8 @@ class BirdNET():
 
         embedder = ParametricUMAP(
                                   encoder=encoder, 
+                                #   decoder=decoder,
+                                #   parametric_reconstruction=True,
                                   batch_size=cfg.TRAIN_BATCH_SIZE, 
                                   random_state=cfg.RANDOM_SEED,
                                   metric=cfg.METRIC,
