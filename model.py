@@ -157,7 +157,8 @@ def buildLinearClassifier(num_labels, input_size, hidden_units=0, dropout=0.0):
         # Dropout layer?
         if dropout > 0:
             model.add(keras.layers.Dropout(dropout))
-        model.add(keras.layers.Dense(hidden_units, activation="relu"))
+        model.add(keras.layers.Dense(hidden_units, activation="relu", kernel_regularizer=keras.regularizers.l2(0.01)))
+        model.add(keras.layers.BatchNormalization())
 
     # Dropout layer?
     if dropout > 0:
@@ -689,7 +690,7 @@ def predictWithCustomClassifier(sample):
         loadCustomClassifier()
 
     if C_PBMODEL == None:
-        vector = embeddings(sample) if C_INPUT_SIZE != 144000 else sample
+        vector = features(sample) if C_INPUT_SIZE != 144000 else sample
 
         # Reshape input tensor
         C_INTERPRETER.resize_tensor_input(C_INPUT_LAYER_INDEX, [len(vector), *vector[0].shape])
@@ -707,8 +708,8 @@ def predictWithCustomClassifier(sample):
         return prediction
 
 
-def embeddings(sample):
-    """Extracts the embeddings for a sample.
+def features(sample):
+    """Extracts the features for a sample.
 
     Args:
         sample: Audio samples.

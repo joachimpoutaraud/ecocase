@@ -1,11 +1,9 @@
-# XCNet
+# BirdMAP
 
 ## Requirements
 
 ```
-conda create -n darksound python=3.10
-conda install pip
-pip install -r requirements.txt
+conda create --name birdmap python=3.11 && conda activate birdmap && pip install -r requirements.txt
 ```
 
 Note: you need to have `ffmpeg` installed, because `librosa` relies on `ffmpeg` to handle MP3 files since it doesn’t support MP3 natively.
@@ -14,19 +12,25 @@ You can install `ffmpeg` on your computer by following these [instructions](http
 ## Workflow
 
 ```python
-from xcnet import XCNet
+from birdmap import BirdMAP
 
-# Create a Xeno-Canto network
-xcnet = XCNet(save_path='train_data') # create 'train_data' folder to save data
+# Create a bird mapper
+mapper = BirdMAP(save_path='train_data') # create 'train_data' folder to save data
 # Build Xeno-Canto dataset with Xeno-Canto parameters from the config file (config.py)
-xcnet.dataset(csv_filename="xc_dataset.csv") 
-# Train model on top of BirdNET with Xeno-Canto dataset and save to disk
-xcnet.train(model_output_path="checkpoints/custom/XCNet.tflite", csv_filename='train_dataset.csv')
+mapper.dataset(csv_filename="xc_dataset.csv") 
+   
+# Extract embeddings from BirdNET model
+mapper.embeddings(csv_filename='embeddings.csv') 
+# Find cluster and assign pseudo-labels
+mapper.pseudo_label(csv_filename='pseudo_label.csv')
+# Train model with pseudo-labeled data and save model
+mapper.train(model_output_path='checkpoints/custom/XCNet.tflite', csv_filename='train_dataset.csv', save_model=True)
+
 
 # Reload Xeno-Canto network with custom classifier
-xcnet = XCNet(save_path='<path_to_your_test_folder>', custom_classifier_path='checkpoints/custom/XCNet.tflite')
+mapper = BirdMAP(save_path='<path_to_your_test_folder>', custom_classifier_path='checkpoints/custom/XCNet.tflite')
 # Extract embeddings from audio files in 'test_data' folder with custom XCNet
-xcnet.embeddings(dataset='<path_to_your_test_folder>', csv_filename='embeddings.csv') 
+mapper.embeddings(dataset='<path_to_your_test_folder>', csv_filename='embeddings.csv') 
 # Pseudo-label data and display clusters
-xcnet.pseudo_label(display=True, csv_filename='cluster.csv') 
+mapper.pseudo_label(display=True, csv_filename='cluster.csv') 
 ```

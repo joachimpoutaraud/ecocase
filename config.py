@@ -11,7 +11,7 @@ RANDOM_SEED: int = 2025         # Fixed random seed
 #########################
 
 # Number of audio files to download for each species
-NUM_FILES: int = 50          
+NUM_FILES: int = 10          
 # Xeno-Canto scientific species (e.g. ['Columba palumbus','Fringilla coelebs']) 
 # If None, species will be requested according to the Xeno-Canto searching parameters
 SPECIES_XC: list[str] = [
@@ -98,7 +98,7 @@ SIG_FMIN: int = 0
 SIG_FMAX: int = 15000
 # Settings for bandpass filter
 BANDPASS_FMIN: int = 150
-BANDPASS_FMAX: int = 15000
+BANDPASS_FMAX: int = 5000
 
 #########################
 #  CLUSTERING SETTINGS  #
@@ -183,7 +183,7 @@ COMBINE_RESULTS: bool = False
 #####################
 
 # Training data path
-TRAIN_DATA_PATH = None
+# TRAIN_DATA_PATH = None
 
 # Sample crop mode
 SAMPLE_CROP_MODE: str = "center"
@@ -195,33 +195,30 @@ NON_EVENT_CLASSES: list[str] = ["noise", "other", "background", "silence"]
 UPSAMPLING_RATIO: float = 0.0
 UPSAMPLING_MODE = "repeat"
 
-# Number of epochs to train for
-TRAIN_EPOCHS: int = 1 # equivalent to 10 * TRAIN_EPOCHS sub-epochs
+# Number of epochs to train model
+TRAIN_EPOCHS: int = 150            
 
-# Number of components to use for ParametricUMAP dimensionality reduction
-N_COMPONENTS: int = 2             
+# Batch size for training model
+TRAIN_BATCH_SIZE: int = 16
 
-# Batch size for training
-TRAIN_BATCH_SIZE: int = 32
+# Learning rate for training model
+TRAIN_LEARNING_RATE: float = 2e-4
+
+# Number of hidden units in custom classifier
+# If >0, a two-layer classifier will be trained
+TRAIN_HIDDEN_UNITS: int = 512
+
+# Dropout rate for training
+TRAIN_DROPOUT: float = 0.75
 
 # Validation split (percentage)
 TRAIN_VAL_SPLIT: float = 0.2
 
-# Learning rate for training
-TRAIN_LEARNING_RATE: float = 0.001
-
-# Number of hidden units in custom classifier
-# If >0, a two-layer classifier will be trained
-TRAIN_HIDDEN_UNITS: int = 0
-
-# Dropout rate for training
-TRAIN_DROPOUT: float = 0.0
-
 # Whether to use mixup for training
-TRAIN_WITH_MIXUP: bool = False
+TRAIN_WITH_MIXUP: bool = True
 
 # Whether to apply label smoothing for training
-TRAIN_WITH_LABEL_SMOOTHING: bool = False
+TRAIN_WITH_LABEL_SMOOTHING: bool = True
 
 # Model output format
 TRAINED_MODEL_OUTPUT_FORMAT: str = "tflite"

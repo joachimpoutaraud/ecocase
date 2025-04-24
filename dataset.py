@@ -26,6 +26,7 @@ class XenoCanto():
             See more details here: https://www.xeno-canto.org/help/search
         species_xc (list): List of Xeno-Canto scientific species (e.g., 'Columba palumbus') in the config file.
             If None, species will only be requested according to the Xeno-Canto query parameters.
+        num_files (int, optional): Number of audio files for each species. Default is None.
         format_time (bool, optional): Time in Xeno-Canto is not always present or correctly formatted.
             If True, time will be correctly formatted to DateTime format. 
             Rows with unprocessable time data are dropped. Default is False.
@@ -42,6 +43,7 @@ class XenoCanto():
                 self,
                 params_xc = cfg.PARAMS_XC,
                 species_xc = cfg.SPECIES_XC,
+                num_files = cfg.NUM_FILES,
                 format_time = False,
                 format_date = False,
                 verbose = True,
@@ -50,11 +52,96 @@ class XenoCanto():
 
         self.params_xc = params_xc
         self.species_xc = species_xc
+        self.num_files = num_files
         self.format_time = format_time
         self.format_date = format_date 
         self.verbose = verbose
         self.save_path = save_path
+        
 
+    def dataset(self, train_data_path=None, csv_filename=None):
+
+        """
+        Query Xeno-Canto database and build a dataset from the metadata.
+        The dataset is a pandas dataframe containing all the recordings metadata matching the Xeno-Canto searching parameters.
+
+        Args:
+            train_data_path (str, optional): Path to the directory where the data is saved. Default is None.
+            csv_filename (str): Name of the csv file to save the dataset. Default is None.
+                If None, the csv file is not saved. 
+
+        Returns:
+            pandas.DataFrame: Dataframe containing all the recordings metadata matching the Xeno-Canto searching parameters.
+        """
+
+        if train_data_path is not None:
+            #TODO Load audio data with categories from a folder to a dataframe
+            # https://github.com/birdnet-team/BirdNET-Analyzer/blob/2c68450fbee102cea1a1ed08a503d779c15c41bc/birdnet_analyzer/train/utils.py#L105
+            pass
+        
+        if self.verbose:
+            print('\n========================= QUERY DATA =========================\n')
+            
+        if self.species_xc is None:
+            self.df = self.query()     
+        else:        
+            # Separate the genus and the species from the scientific name
+            gen, sp = [], []
+            
+            for name in self.species_xc:
+                gen.append(name.rpartition(' ')[0])
+                sp.append(name.rpartition(' ')[2])
+
+            # Add the genus and the species as query parameters
+            df_query = pd.DataFrame() # create empty dataframe
+            df_query[0] = gen
+            df_query[1] = sp
+
+            # Add the other parameters
+            if self.params_xc is not None:
+                idx = 2
+                for param in self.params_xc:
+                    df_query[idx] = param
+                    idx += 1
+            
+            # Create empty dataframe
+            self.df = pd.DataFrame() 
+                     
+            for _, row in df_query.iterrows():
+                # Convert parameters to list
+                self.params_xc = row.tolist()
+                # Request data from Xeno-Canto
+                self.df = pd.concat([self.df, self.query()]) 
+                
+        if self.verbose:            
+            if len(self.df) > 0: 
+            # Test if the dataframe contains files to download
+                print('\n====================== XENO-CANTO DATASET ======================\n')
+                print('Composition of the dataset:')
+                print('   - Number of audio files: %2.0f' % len(self.df))
+                print('   - Number of species: %2.0f' % len(self.df['en'].unique()))
+                print('   - Unique species: {}'.format(self.df['en'].unique()))
+            else:
+                print('\n*** WARNING ***\nThe dataframe is empty.')   
+                print("No audio recording was found with the parameters:\n{}".format(self.params_xc))
+                return
+                
+        # Test if recordings are found
+        if len(self.df) > 0:
+            # Rearrange index to be sure to have unique and increasing index
+            self.df.reset_index(drop=True, inplace=True)
+            
+        if csv_filename is not None:            
+            if self.save_path is not None:
+                # Format save_path into Path
+                save_path = Path(self.save_path)
+                # Save and append dataframe 
+                csv_filename = save_path / csv_filename
+            # Save dataframe
+            self.df.to_csv(csv_filename, sep=";", encoding='utf-8', index=False, index_label='id') 
+            
+        return self.df
+    
 
     def query(self):
         
@@ -139,18 +226,18 @@ class XenoCanto():
                 df['datetime'] =  pd.to_datetime(df['time']+' '+ df['date'], format="%H:%M %Y-%m-%d")
 
         if len(df) > 0:    
-            if cfg.NUM_FILES is not None:
-                if cfg.NUM_FILES > len(df):
+            if self.num_files is not None:
+                if self.num_files > len(df):
                     if self.verbose:
                         print(f"Only {len(df)} audio files are available.")
                 else:
                     # Test if the number of files is greater than the maximum number of resquested files for each species 
-                    for i in df.en.value_counts()[df.en.value_counts() > cfg.NUM_FILES].index.to_list():
+                    for i in df.en.value_counts()[df.en.value_counts() > self.num_files].index.to_list():
                         rows = df[df.en == i]
-                        to_drop = rows.sample(n=len(rows) - cfg.NUM_FILES, random_state=cfg.RANDOM_SEED).index.to_list()
+                        to_drop = rows.sample(n=len(rows) - self.num_files, random_state=cfg.RANDOM_SEED).index.to_list()
                         df = df.drop(to_drop)
                     # Test if the number of files is smaller than the minimum number of resquested files for each species 
-                    for i in df.en.value_counts()[df.en.value_counts() < cfg.NUM_FILES].index.to_list():
+                    for i in df.en.value_counts()[df.en.value_counts() < self.num_files].index.to_list():
                         to_drop = df[df.en == i].index.to_list()
                         df = df.drop(to_drop)
                         
@@ -173,77 +260,3 @@ class XenoCanto():
         df = df[cols]                
 
         return df
-    
-
-    def dataset(self, num_files=None, species_xc=None, params_xc=None, csv_filename=None):
-        
-        if self.verbose:
-            print('\n========================= QUERY DATA =========================\n')
-            
-        if num_files is not None:
-            # Number of audio files for each species
-            cfg.NUM_FILES = num_files
-        if species_xc is not None:
-            self.species_xc = species_xc
-        if params_xc is not None:
-            self.params_xc = params_xc
-
-        if self.species_xc is None:
-            self.df = self.query()     
-        else:        
-            # Separate the genus and the species from the scientific name
-            gen, sp = [], []
-            
-            for name in self.species_xc:
-                gen.append(name.rpartition(' ')[0])
-                sp.append(name.rpartition(' ')[2])
-
-            # Add the genus and the species as query parameters
-            df_query = pd.DataFrame() # create empty dataframe
-            df_query[0] = gen
-            df_query[1] = sp
-
-            # Add the other parameters
-            if self.params_xc is not None:
-                idx = 2
-                for param in self.params_xc:
-                    df_query[idx] = param
-                    idx += 1
-            
-            # Create empty dataframe
-            self.df = pd.DataFrame() 
-                     
-            for _, row in df_query.iterrows():
-                # Convert parameters to list
-                self.params_xc = row.tolist()
-                # Request data from Xeno-Canto
-                self.df = pd.concat([self.df, self.query()]) 
-                
-        if self.verbose:            
-            if len(self.df) > 0: 
-            # Test if the dataframe contains files to download
-                print('\n====================== XENO-CANTO DATASET ======================\n')
-                print('Composition of the dataset:')
-                print('   - Number of audio files: %2.0f' % len(self.df))
-                print('   - Number of species: %2.0f' % len(self.df['en'].unique()))
-                print('   - Unique species: {}'.format(self.df['en'].unique()))
-            else:
-                print('\n*** WARNING ***\nThe dataframe is empty.')   
-                print("No audio recording was found with the parameters:\n{}".format(self.params_xc))
-                return
-                
-        # Test if recordings are found
-        if len(self.df) > 0:
-            # Rearrange index to be sure to have unique and increasing index
-            self.df.reset_index(drop=True, inplace=True)
-            
-        if csv_filename is not None:            
-            if self.save_path is not None:
-                # Format save_path into Path
-                save_path = Path(self.save_path)
-                # Save and append dataframe 
-                csv_filename = save_path / csv_filename
-            # Save dataframe
-            self.df.to_csv(csv_filename, sep=";", encoding='utf-8', index=False, index_label='id') 
-            
-        return self.df

@@ -2,6 +2,7 @@ librosa==0.9.2
 resampy
 tensorflow==2.15.0
 keras==2.15.0
+keras-tuner
 gradio==5.4.0
 pywebview
 ipython
@@ -9,7 +10,6 @@ matplotlib===3.9.3
 tqdm
 bottle
 requests
-keras-tuner
 hdbscan
 umap-learn
 kneed

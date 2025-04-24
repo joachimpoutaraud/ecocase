@@ -381,8 +381,11 @@ def mixup(x, y, augmentation_ratio=0.25, alpha=0.2):
         # Mark the sample as already mixed up
         mixed_up_indices.append(index)
 
-    del mixed_x
-    del mixed_y
+    try:
+        del mixed_x
+        del mixed_y
+    except:
+        pass
 
     return x, y
 
@@ -395,6 +398,29 @@ def label_smoothing(y, alpha=0.1):
     y[y == 0] = alpha / y.shape[0]
 
     return y
+
+
+def normalize_embeddings(embeddings):
+    """
+    Normalize embeddings to improve training stability and performance.
+    
+    This applies L2 normalization to each embedding vector, which can help
+    with convergence and model performance, especially when training on 
+    embeddings from different sources or domains.
+    
+    Args:
+        embeddings: numpy array of embedding vectors
+        
+    Returns:
+        Normalized embeddings array
+    """
+    # Calculate L2 norm of each embedding vector
+    norms = np.sqrt(np.sum(embeddings**2, axis=1, keepdims=True))
+    # Avoid division by zero
+    norms[norms == 0] = 1.0
+    # Normalize each embedding vector
+    normalized = embeddings / norms
+    return normalized
 
 
 def upsampling(x, y, ratio=0.5, mode="repeat"):

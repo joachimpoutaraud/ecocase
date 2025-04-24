@@ -23,7 +23,7 @@ def create_thumbnails(row, save_path, encode=False):
     import audio
     import os
     
-    y, sr = audio.openAudioFile(row.file, sample_rate=cfg.BANDPASS_FMAX, offset=row.start, duration=row.end - row.start)
+    y, sr = audio.openAudioFile(row.file, sample_rate=16000, offset=row.start, duration=row.end - row.start)
     S = librosa.feature.melspectrogram(y=y, sr=sr)
     S_db = librosa.power_to_db(S, ref=np.max)
     plt.figure(figsize=(4, 2))
