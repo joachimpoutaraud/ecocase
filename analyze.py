@@ -459,7 +459,7 @@ def analyzeFile(item):
     """
     # Get file path and restore cfg
     fpath: str = item[0]
-    cfg.setConfig(item[1])
+    cfg.set_config(item[1])
 
     result_file_names = get_result_file_names(fpath)
 

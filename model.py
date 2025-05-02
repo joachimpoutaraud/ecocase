@@ -48,9 +48,7 @@ def loadModel(class_output=True):
     # Do we have to load the tflite or protobuf model?
     if cfg.MODEL_PATH.endswith(".tflite"):
         # Load TFLite model and allocate tensors.        
-        INTERPRETER = tflite.Interpreter(
-            model_path=os.path.join(SCRIPT_DIR, cfg.MODEL_PATH), num_threads=cfg.TFLITE_THREADS
-        )
+        INTERPRETER = tflite.Interpreter(model_path=os.path.join(SCRIPT_DIR, cfg.MODEL_PATH), num_threads=cfg.TFLITE_THREADS)
         INTERPRETER.allocate_tensors()
 
         # Get input and output tensors.
@@ -68,13 +66,16 @@ def loadModel(class_output=True):
 
     else:
         # Load protobuf model
-        # Note: This will throw a bunch of warnings about custom gradients
-        # which we will ignore until TF lets us block them
+        # Note: This will throw a bunch of warnings about custom gradients which we will ignore until TF lets us block them
         PBMODEL = keras.models.load_model(os.path.join(SCRIPT_DIR, cfg.MODEL_PATH), compile=False)
 
 
 def loadCustomClassifier(class_output=True):
-    """Loads the custom classifier."""
+    """Loads the custom classifier.
+
+    Args:
+        class_output: Omits the last layer when False.
+    """
     global C_INTERPRETER
     global C_INPUT_LAYER_INDEX
     global C_OUTPUT_LAYER_INDEX
@@ -104,7 +105,6 @@ def loadCustomClassifier(class_output=True):
         import tensorflow as tf
 
         tf.get_logger().setLevel("ERROR")
-
         C_PBMODEL = tf.saved_model.load(cfg.CUSTOM_CLASSIFIER)
 
 
@@ -171,96 +171,6 @@ def buildLinearClassifier(num_labels, input_size, hidden_units=0, dropout=0.0):
     model.add(keras.layers.Activation("sigmoid"))
 
     return model
-
-
-def trainEpisodicPrototypicalNetwork(
-    classifier,
-    x_train,
-    y_train,
-    num_classes,
-    num_support,
-    num_query,
-    epochs,
-    learning_rate,
-    on_epoch_end=None,
-):
-    """Trains a classifier using episodic training with prototypical networks.
-
-    Args:
-        classifier: The classifier to be trained.
-        x_train: Training samples.
-        y_train: One-hot encoded labels.
-        num_classes: Number of classes.
-        num_support: Number of support samples per class.
-        num_query: Number of query samples per class.
-        epochs: Number of epochs to train.
-        learning_rate: The learning rate during training.
-        on_epoch_end: Optional callback `function(epoch, logs)`.
-
-    Returns:
-        (classifier, history)
-    """
-    from tensorflow import keras
-    import tensorflow as tf
-
-    class FunctionCallback(keras.callbacks.Callback):
-        def __init__(self, on_epoch_end=None) -> None:
-            super().__init__()
-            self.on_epoch_end_fn = on_epoch_end
-
-        def on_epoch_end(self, epoch, logs=None):
-            if self.on_epoch_end_fn:
-                self.on_epoch_end_fn(epoch, logs)
-
-    def compute_prototypes(support_set, num_classes, num_support):
-        """Compute class prototypes from the support set."""
-        prototypes = []
-        for i in range(num_classes):
-            class_samples = support_set[i * num_support : (i + 1) * num_support]
-            class_prototype = tf.reduce_mean(class_samples, axis=0)
-            prototypes.append(class_prototype)
-        return tf.stack(prototypes)
-
-    def compute_distances(prototypes, query_set):
-        """Compute distances between prototypes and query set samples."""
-        distances = []
-        for query in query_set:
-            dists = tf.norm(prototypes - query, axis=1)
-            distances.append(dists)
-        return tf.stack(distances)
-
-    def create_episode(x_train, y_train, num_classes, num_support, num_query):
-        """Create an episode with support and query sets."""
-        support_set = []
-        query_set = []
-        for i in range(num_classes):
-            class_indices = np.where(np.argmax(y_train, axis=1) == i)[0]
-            selected_indices = np.random.choice(class_indices, num_support + num_query, replace=False)
-            support_set.append(x_train[selected_indices[:num_support]])
-            query_set.append(x_train[selected_indices[num_support:]])
-        return np.concatenate(support_set), np.concatenate(query_set)
-
-    optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
-    loss_fn = keras.losses.SparseCategoricalCrossentropy(from_logits=True)
-
-    history = []
-
-    for epoch in range(epochs):
-        support_set, query_set = create_episode(x_train, y_train, num_classes, num_support, num_query)
-        with tf.GradientTape() as tape:
-            prototypes = compute_prototypes(support_set, num_classes, num_support)
-            distances = compute_distances(prototypes, query_set)
-            logits = -distances
-            labels = tf.repeat(tf.range(num_classes), num_query)
-            loss = loss_fn(labels, logits)
-
-        gradients = tape.gradient(loss, classifier.trainable_variables)
-        optimizer.apply_gradients(zip(gradients, classifier.trainable_variables))
-
-        history.append(loss.numpy())
-
-        if on_epoch_end:
-            on_epoch_end(epoch, {"loss": loss.numpy()})
 
 
 def trainLinearClassifier(
@@ -413,9 +323,7 @@ def saveLinearClassifier(classifier, model_path: str, labels: list[str], mode="r
         combined_model = tf.keras.Sequential([saved_model.embeddings_model, classifier], "basic")
     elif mode == "append":
         intermediate = classifier(saved_model.model.get_layer("GLOBAL_AVG_POOL").output)
-
         output = tf.keras.layers.concatenate([saved_model.model.output, intermediate], name="combined_output")
-
         combined_model = tf.keras.Model(inputs=saved_model.model.input, outputs=output)
     else:
         raise ValueError("Model save mode must be either 'replace' or 'append'")
@@ -629,6 +537,44 @@ def custom_loss(y_true, y_pred, epsilon=1e-7):
 
     return total_loss
 
+def focal_loss(y_true, y_pred, gamma=2.0, alpha=0.25, epsilon=1e-7):
+    """
+    Focal loss for better handling of class imbalance.
+
+    This loss function gives more weight to hard examples and down-weights easy examples.
+    Particularly helpful for imbalanced datasets where some classes have few samples.
+
+    Args:
+        y_true: Ground truth labels.
+        y_pred: Predicted probabilities.
+        gamma: Focusing parameter. Higher values mean more focus on hard examples.
+        alpha: Balance parameter. Controls weight of positive vs negative examples.
+        epsilon: Small constant to prevent log(0).
+
+    Returns:
+        Focal loss value.
+    """
+    import tensorflow.keras.backend as K
+
+    # Apply sigmoid if not already applied
+    y_pred = K.clip(y_pred, epsilon, 1.0 - epsilon)
+
+    # Calculate cross entropy
+    cross_entropy = -y_true * K.log(y_pred) - (1 - y_true) * K.log(1 - y_pred)
+
+    # Calculate focal weight
+    p_t = y_true * y_pred + (1 - y_true) * (1 - y_pred)
+    focal_weight = K.pow(1 - p_t, gamma)
+
+    # Apply alpha balancing
+    alpha_factor = y_true * alpha + (1 - y_true) * (1 - alpha)
+
+    # Calculate focal loss
+    focal_loss = alpha_factor * focal_weight * cross_entropy
+
+    # Sum over all classes
+    return K.sum(focal_loss, axis=-1)
+
 
 def flat_sigmoid(x, sensitivity=-1):
     return 1 / (1.0 + np.exp(sensitivity * np.clip(x, -15, 15)))
@@ -722,7 +668,7 @@ def features(sample):
 
     # Does interpreter exist?
     if INTERPRETER == None:
-        loadModel(False) 
+        loadModel(class_output=False) 
         
     # Reshape input tensor
     INTERPRETER.resize_tensor_input(INPUT_LAYER_INDEX, [len(sample), *sample[0].shape])
@@ -731,22 +677,7 @@ def features(sample):
     # Extract feature embeddings
     INTERPRETER.set_tensor(INPUT_LAYER_INDEX, np.array(sample, dtype="float32"))
     INTERPRETER.invoke()
-    features = INTERPRETER.get_tensor(OUTPUT_LAYER_INDEX)
-    
-    # global C_INTERPRETER
 
-    # # Does interpreter exist?
-    # if C_INTERPRETER == None:
-    #     # loadModel(False) 
-    #     loadCustomClassifier(False)
+    return INTERPRETER.get_tensor(OUTPUT_LAYER_INDEX)
 
-    # # Reshape input tensor
-    # C_INTERPRETER.resize_tensor_input(C_INPUT_LAYER_INDEX, [len(sample), *sample[0].shape])
-    # C_INTERPRETER.allocate_tensors()
 
-    # # Extract feature embeddings
-    # C_INTERPRETER.set_tensor(C_INPUT_LAYER_INDEX, np.array(sample, dtype="float32"))
-    # C_INTERPRETER.invoke()
-    # features = C_INTERPRETER.get_tensor(C_OUTPUT_LAYER_INDEX)
-
-    return features

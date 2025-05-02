@@ -68,7 +68,7 @@ def create_thumbnails(row, save_path, encode=False):
         return f"{os.path.join(save_path, str(row.categories) + str(row.start))}.png", f"{os.path.join(save_path, str(row.categories) + str(row.start))}.wav"
 
 
-def interactive_display(df_cluster, X=None, output_filename='interactive_scatter', save_path=None, thumbnails=True, encode=False, noise=False, frame_width=1000, frame_height=600, point_size=10):  
+def interactive_display(df_cluster, X=None, output_filename='interactive_scatter', save_path=None, thumbnails=True, encode=False, noise=False, frame_width=1000, frame_height=600, point_size=5):  
     
     # Check if dataset is a path to a dataframe, audio file or folder
     if type(df_cluster) == str:
@@ -77,7 +77,7 @@ def interactive_display(df_cluster, X=None, output_filename='interactive_scatter
         # Check file extension
         if ext == ".csv": 
             df_cluster = pd.read_csv(df_cluster, sep=";")
-    
+
     if X is None:
         # Prepare the embeddings    
         X = df_cluster.loc[:, df_cluster.columns.str.startswith("emb")].to_numpy()
@@ -87,19 +87,28 @@ def interactive_display(df_cluster, X=None, output_filename='interactive_scatter
         
     if not noise:
         # Keep only data pseudo-labeled as signal 
-        noise_mask = df_cluster['pseudo_label'] == 1
+        if 'confidence' in df_cluster.columns:
+            noise_mask = df_cluster['confidence'] > cfg.MIN_CONFIDENCE
+        else:
+            noise_mask = df_cluster['pseudo_label'] == 1
+
         df_cluster = df_cluster[noise_mask]
         X = X[noise_mask]
+
+    # Get all the cluster labels and filenames
+    if 'prediction' in df_cluster.columns:
+        species = df_cluster['prediction']   
+        labels = pd.factorize(species)[0] # Convert string labels to integer codes using pandas
+    else:
+        labels = df_cluster['cluster_number']
 
     if X.shape[1] > 2:
         # Fit the UMAP model and transform the data
         reducer = umap.UMAP(n_components=2, metric=cfg.METRIC, random_state=cfg.RANDOM_SEED)
-        X = reducer.fit_transform(X)
-    
-    # Get all the cluster labels and filenames
-    labels = df_cluster['cluster_number']
+        X = reducer.fit_transform(X, y=labels)
+
     # Get the unique cluster labels and try to get optimal color number
-    unique_clusters = labels.unique().astype(str).tolist()
+    unique_clusters = np.unique(labels).astype(str).tolist()
     x, y = X[:, 0], X[:, 1]
 
     try:
@@ -134,66 +143,54 @@ def interactive_display(df_cluster, X=None, output_filename='interactive_scatter
                     except:
                         pass
 
+        data_dict = dict(x=x, 
+                 y=y, 
+                 label=labels.astype(str).tolist(), 
+                 spectrogram=spectrograms, 
+                 audio=audio_files, 
+                 filename=df_cluster['file'].astype(str).tolist())
+
+        tooltips = """
+            <div>
+            <div>
+                <img src="@spectrogram" height="200" width="200" border="1" style="float: left; margin: 0px 15px 15px 0px;"></img>
+            </div>
+            <div style="font-size: 12px; color: #966;">Filename: @filename</div>
+            <div style="font-size: 12px; color: #966;">Label: @label</div>
+        """
+
         if set(['lat', 'lng']).issubset(df_cluster.columns):
-            source = ColumnDataSource(data=dict(x=x, 
-                                                y=y, 
-                                                label=labels.astype(str).tolist(), 
-                                                spectrogram=spectrograms, 
-                                                audio=audio_files, 
-                                                filename=df_cluster['file'].astype(str).tolist(), 
-                                                lat=df_cluster['lat'].astype(str).tolist(), 
-                                                lng=df_cluster['lng'].astype(str).tolist())
-                                    )
+            data_dict.update(lat=df_cluster['lat'].astype(str).tolist(), 
+                     lng=df_cluster['lng'].astype(str).tolist())
+            tooltips += """
+            <div style="font-size: 12px; color: #966;">Latitude: @lat</div>
+            <div style="font-size: 12px; color: #966;">Longitude: @lng</div>
+            """
+        elif 'confidence' in df_cluster.columns:
+            data_dict.update(confidence=df_cluster['confidence'].to_numpy())
+            tooltips += """
+            <div style="font-size: 12px; color: #966;">Confidence: @confidence</div>
+            """
 
-            hover = HoverTool(tooltips="""
-                <div>
-                    <div>
-                        <img src="@spectrogram" height="200" width="200" border="1" style="float: left; margin: 0px 15px 15px 0px;"></img>
-                    </div>
-                    <div style="font-size: 15px; font-weight: bold;">Label: @label</div>
-                    <div style="font-size: 12px; color: #966;">Filename: @filename</div>
-                    <div style="font-size: 12px; color: #966;">Latitude: @lat</div>
-                    <div style="font-size: 12px; color: #966;">Longitude: @lng</div>
-                    </div>
-                    <div>
-                        <audio autoplay controls style="width: 200px;">
-                            <source src="@audio" type="audio/wav">
-                            Your browser does not support the audio element.
-                        </audio>
-                    </div>
-                </div>
-                """
-            )
+        tooltips += """
+            </div>
+            <div>
+                <audio autoplay controls style="width: 200px;">
+                <source src="@audio" type="audio/wav">
+                Your browser does not support the audio element.
+                </audio>
+            </div>
+            </div>
+        """
 
-        else:
-            source = ColumnDataSource(data=dict(x=x, 
-                                                y=y, 
-                                                label=labels.astype(str).tolist(), 
-                                                spectrogram=spectrograms, 
-                                                audio=audio_files, 
-                                                filename=df_cluster['file'].astype(str).tolist())
-                                    )
-
-            hover = HoverTool(tooltips="""
-                <div>
-                    <div>
-                        <img src="@spectrogram" height="200" width="200" border="1" style="float: left; margin: 0px 15px 15px 0px;"></img>
-                    </div>
-                    <div style="font-size: 15px; font-weight: bold;">Label: @label</div>
-                    <div style="font-size: 12px; color: #966;">Filename: @filename</div>
-                    </div>
-                    <div>
-                        <audio autoplay controls style="width: 200px;">
-                            <source src="@audio" type="audio/wav">
-                            Your browser does not support the audio element.
-                        </audio>
-                    </div>
-                </div>
-                """
-            )    
+        source = ColumnDataSource(data=data_dict)
+        hover = HoverTool(tooltips=tooltips)
 
         p = figure(frame_width=frame_width, frame_height=frame_height, title=f"{cfg.METHOD} interactive scatter plot with spectrograms and audio", tools="pan,wheel_zoom,reset")
-        p.scatter('x', 'y', size=point_size, color=mapper, source=source)
+        if 'confidence' in df_cluster.columns:
+            p.scatter('x', 'y', size=point_size, color=mapper, alpha='confidence', source=source)
+        else:
+            p.scatter('x', 'y', size=point_size, color=mapper, source=source)
         p.add_tools(hover)
         
     else:

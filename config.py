@@ -11,7 +11,7 @@ RANDOM_SEED: int = 2025         # Fixed random seed
 #########################
 
 # Number of audio files to download for each species
-NUM_FILES: int = 10          
+NUM_FILES: int = 100          
 # Xeno-Canto scientific species (e.g. ['Columba palumbus','Fringilla coelebs']) 
 # If None, species will be requested according to the Xeno-Canto searching parameters
 SPECIES_XC: list[str] = [
@@ -76,7 +76,7 @@ TRANSLATED_LABELS_PATH: str = "labels/V2.4"
 # Path to custom trained classifier
 # If None, no custom classifier will be used
 # Make sure to set the LABELS_FILE above accordingly
-CUSTOM_CLASSIFIER: str = "checkpoints/custom/embedder.keras"
+CUSTOM_CLASSIFIER = None
 
 ##################
 # AUDIO SETTINGS #
@@ -146,9 +146,8 @@ APPLY_SIGMOID: bool = True
 SIGMOID_SENSITIVITY: float = 1.0
 
 # Minimum confidence score to include in selection table
-# (be aware: if APPLY_SIGMOID = False, this no longer represents
-# probabilities and needs to be adjusted)
-MIN_CONFIDENCE: float = 0.1
+# (be aware: if APPLY_SIGMOID = False, this no longer represents probabilities and needs to be adjusted)
+MIN_CONFIDENCE: float = 0.7
 
 # Number of samples to process at the same time. Higher values can increase
 # processing speed, but will also increase memory usage.
@@ -231,7 +230,7 @@ TRAIN_CACHE_MODE: str = "none"
 TRAIN_CACHE_FILE: str = "train_cache.npz"
 
 # Use automatic Hyperparameter tuning
-AUTOTUNE: bool = False
+AUTOTUNE: bool = True
 
 # How many trials are done for the hyperparameter tuning
 AUTOTUNE_TRIALS: int = 10

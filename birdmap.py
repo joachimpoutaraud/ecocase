@@ -51,7 +51,7 @@ class BirdMAP(XenoCanto):
                 os.makedirs(self.save_path)         
                 
 
-    def embeddings(self, dataset=None, csv_filename=None): 
+    def embeddings(self, dataset=None, csv_filename=None, predict=False): 
 
         """
         Perform multi-CPU embeddings extraction of audio chunks.
@@ -60,6 +60,7 @@ class BirdMAP(XenoCanto):
         Args:
             dataset (str, optional): Path to dataset. This could be the path to a pandas DataFrame or an audio recordings folder. Defaults to None.
             csv_filename (str, optional): The name of the csv file to save the embeddings. Default is None.
+            predict (bool, optional): Whether to predict bird species with model or not. Default is False.
 
         Returns:
             pd.DataFrame: DataFrame containing all embeddings extracted for each ROI in the dataset.
@@ -106,7 +107,7 @@ class BirdMAP(XenoCanto):
         with tqdm(total=len(self.df), desc="Extract embeddings") as pbar:
             with ProcessPoolExecutor(max_workers=cfg.CPU_THREADS-1) as pool:
                 try:
-                    for df_embeddings_temp in pool.map(partial(self._extract_features), (row for _, row in self.df.iterrows())):
+                    for df_embeddings_temp in pool.map(partial(self._extract_features, predict=predict), (row for _, row in self.df.iterrows())):
                         # Concatenate dataFrames
                         df_embeddings = pd.concat([df_embeddings, df_embeddings_temp], ignore_index=True)
                         # Update progress bar
@@ -330,7 +331,8 @@ class BirdMAP(XenoCanto):
         x_train = self.df.loc[:, self.df.columns.str.startswith("emb")].to_numpy()
 
         # Get the unique categories
-        labels = self.df.categories.unique()        
+        labels = self.df.categories.unique()     
+
         # Perform one-hot encoding on categories
         one_hot_encoded = pd.get_dummies(self.df.categories) 
         y_train = one_hot_encoded.values
@@ -480,21 +482,22 @@ class BirdMAP(XenoCanto):
         print(f"Done! Best AUPRC: {best_val_auprc}, Best AUROC: {best_val_auroc}", flush=True)
         print(f"Path to trained classifier model output: {model_output_path}", flush=True)
 
-        # Update model and label file paths
-        cfg.MODEL_PATH = model_output_path
-        filename, _ = os.path.splitext(model_output_path)
-        cfg.LABELS_FILE = f"{filename}_Labels.txt"
+        # # Update model and label file paths
+        # cfg.MODEL_PATH = model_output_path
+        # filename, _ = os.path.splitext(model_output_path)
+        # cfg.LABELS_FILE = f"{filename}_Labels.txt"
 
         return history
 
 
-    def _extract_features(self, row):
+    def _extract_features(self, row, predict=False):
         
         """
         Extracts features from the chunks of an audio file from the row of a dataframe.
 
         Args:
             row (pd.Series): Row of a pandas Dataframe.
+            predict (bool, optional): Whether to predict bird species with model or not. Default is False.
             
         Returns:
             pd.DataFrame: DataFrame containing all embeddings extracted from the audio chunks.
@@ -512,7 +515,8 @@ class BirdMAP(XenoCanto):
         # Check whether to use custom classifier or default config classifier
         if self.custom_classifier_path is not None:
             filename, _ = os.path.splitext(self.custom_classifier_path)
-            # Update model and label file paths
+            # Update custom classifier and label file paths
+            cfg.CUSTOM_CLASSIFIER = self.custom_classifier_path
             cfg.MODEL_PATH = self.custom_classifier_path
             cfg.LABELS_FILE = f"{filename}_Labels.txt"
 
@@ -527,6 +531,8 @@ class BirdMAP(XenoCanto):
                 samples = []
                 timestamps = []
                 embeddings = []
+                predictions = []
+                confidences = []
 
                 for c in range(len(chunks)):
                     # Add to batch
@@ -547,6 +553,27 @@ class BirdMAP(XenoCanto):
                     # Append features to list
                     embeddings.append(f[0])
 
+                    if predict:
+                        import operator
+                        from utils import readLines
+
+                        p = model.predict(data)
+                        # Logits or sigmoid activations?
+                        if cfg.APPLY_SIGMOID:
+                            p = model.flat_sigmoid(np.array(p), sensitivity=-cfg.SIGMOID_SENSITIVITY)
+
+                        for i in range(len(samples)):
+                            # Get prediction
+                            pred = p[i]
+                            # Assign scores to labels
+                            p_labels = zip(readLines(cfg.LABELS_FILE), pred)
+                            # Sort by score
+                            p_sorted = sorted(p_labels, key=operator.itemgetter(1), reverse=True)
+
+                            # Add top prediction and confidence to lists
+                            predictions.append(p_sorted[0][0])  # Species name
+                            confidences.append(p_sorted[0][1])  # Confidence score
+
                     # Reset batch
                     samples = []
                     
@@ -558,6 +585,11 @@ class BirdMAP(XenoCanto):
                 cols = ['start', 'end'] 
                 cols += ['emb' + str(idx).zfill(4) for idx in range(1, len(embeddings[0]) + 1)] 
                 new_df = pd.DataFrame(data=data, columns=cols)
+
+                # If predict is True, add predictions and confidences to the dataframe
+                if predict:
+                    new_df['prediction'] = predictions
+                    new_df['confidence'] = confidences
                 
                 # Concatenate dataFrames
                 df = pd.concat([df.reset_index(drop=True), new_df.reset_index(drop=True)], axis=1)
@@ -614,13 +646,12 @@ class BirdMAP(XenoCanto):
 if __name__ == "__main__":
     
     ### TRAIN
-    mapper = BirdMAP(save_path='train_data') # create Xeno-Canto network with 'train_data' folder to save data
-
     # We use specific clustering settings for building pseudo-labeled dataset
     config = cfg.get_config()
     config["KEEP"] = 'BIGGEST'
     cfg.set_config(config) # restore config in case we're on Windows to be thread save
 
+    mapper = BirdMAP(save_path='train_data') # create Xeno-Canto network with 'train_data' folder to save data
     # Build Xeno-Canto dataset with Xeno-Canto parameters from the config file (config.py)
     mapper.dataset(csv_filename="xc_dataset.csv")     
     # Extract embeddings from BirdNET model
@@ -628,22 +659,25 @@ if __name__ == "__main__":
     # Find cluster and assign pseudo-labels
     mapper.pseudo_label(csv_filename='pseudo_label.csv')
 
-    # Train model with Xeno-Canto pseudo-labeled dataset 
-    mapper.train(model_output_path="checkpoints/custom/XCNet.tflite", csv_filename='train_dataset.csv')
+    # Train custom classifier with Xeno-Canto pseudo-labeled dataset 
+    mapper.train(model_output_path="checkpoints/custom/XCNet.tflite", csv_filename='train_dataset.csv')#, dataset='train_data/pseudo_label.csv')
 
 
-    # ### TEST
-    # mapper = BirdMAP(save_path='test_data', custom_classifier_path='checkpoints/custom/XCNet.tflite')
-
+    ### TEST
     # # We use specific clustering settings for extracting the clusters
     # config = cfg.get_config()
     # config["KEEP"] = 'ALL'
     # cfg.set_config(config) # restore config in case we're on Windows to be thread save
 
-    # # Extract embeddings from audio files in 'test_data' folder with custom XCNet
-    # mapper.embeddings(dataset='test_data/', csv_filename='embeddings.csv') 
-    # # Pseudo-label data and display clusters
-    # mapper.pseudo_label(dataset='test_data/embeddings.csv', csv_filename='pseudo_label.csv', display=True)  
+    # mapper = BirdMAP(save_path='test_data', custom_classifier_path="checkpoints/custom/XCNet.tflite")
+    # # Extract embeddings from audio files in 'test_data' folder and assign labels with custom classifier
+    # mapper.embeddings(dataset='test_data/', csv_filename='embeddings.csv', predict=True) 
+
+    # from display import interactive_display
+    # interactive_display(mapper.df, save_path=mapper.save_path, thumbnails=True, noise=False)
+
+    # Pseudo-label data and display clusters
+    # mapper.pseudo_label(csv_filename='pseudo_label.csv', display=True, thumbnails=True, noise=False)  
 
 
 
