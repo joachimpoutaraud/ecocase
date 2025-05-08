@@ -187,8 +187,8 @@ def interactive_display(df_cluster, X=None, output_filename='interactive_scatter
         hover = HoverTool(tooltips=tooltips)
 
         p = figure(frame_width=frame_width, frame_height=frame_height, title=f"{cfg.METHOD} interactive scatter plot with spectrograms and audio", tools="pan,wheel_zoom,reset")
-        if 'confidence' in df_cluster.columns:
-            p.scatter('x', 'y', size=point_size, color=mapper, alpha='confidence', source=source)
+        if 'confidence' in df_cluster.columns and 'confidence' in source.data:
+            p.scatter('x', 'y', size=point_size, color=mapper, fill_alpha='confidence', source=source)
         else:
             p.scatter('x', 'y', size=point_size, color=mapper, source=source)
         p.add_tools(hover)

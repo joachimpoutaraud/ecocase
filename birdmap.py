@@ -210,7 +210,7 @@ class BirdMAP(XenoCanto):
                                 dbscan_parameters.append(results)
                                 
                                 # Check if the current score is lower than the previous best score
-                                if best_score is not None and results[0] < best_score[0]:
+                                if best_score is not None and results[0] <= best_score[0]:
                                     break
                                 # Update the best score
                                 best_score = results
@@ -550,20 +550,22 @@ class BirdMAP(XenoCanto):
                     # Prepare sample and pass through model
                     data = np.array(samples, dtype="float32")
                     f = model.features(data)
-                    # Append features to list
-                    embeddings.append(f[0])
 
                     if predict:
-                        import operator
-                        from utils import readLines
-
                         p = model.predict(data)
                         # Logits or sigmoid activations?
                         if cfg.APPLY_SIGMOID:
                             p = model.flat_sigmoid(np.array(p), sensitivity=-cfg.SIGMOID_SENSITIVITY)
 
-                        for i in range(len(samples)):
-                            # Get prediction
+                    for i in range(len(samples)): 
+                        # Get embeddings
+                        embeddings.append(f[i])
+
+                        if predict:
+                            import operator
+                            from utils import readLines
+
+                            # Get predictions
                             pred = p[i]
                             # Assign scores to labels
                             p_labels = zip(readLines(cfg.LABELS_FILE), pred)
@@ -645,11 +647,11 @@ class BirdMAP(XenoCanto):
 
 if __name__ == "__main__":
     
-    ### TRAIN
-    # We use specific clustering settings for building pseudo-labeled dataset
-    config = cfg.get_config()
-    config["KEEP"] = 'BIGGEST'
-    cfg.set_config(config) # restore config in case we're on Windows to be thread save
+    # ### TRAIN
+    # # We use specific clustering settings for building pseudo-labeled dataset
+    # config = cfg.get_config()
+    # config["KEEP"] = 'BIGGEST'
+    # cfg.set_config(config) # restore config in case we're on Windows to be thread save
 
     mapper = BirdMAP(save_path='train_data') # create Xeno-Canto network with 'train_data' folder to save data
     # Build Xeno-Canto dataset with Xeno-Canto parameters from the config file (config.py)
@@ -659,8 +661,8 @@ if __name__ == "__main__":
     # Find cluster and assign pseudo-labels
     mapper.pseudo_label(csv_filename='pseudo_label.csv')
 
-    # Train custom classifier with Xeno-Canto pseudo-labeled dataset 
-    mapper.train(model_output_path="checkpoints/custom/XCNet.tflite", csv_filename='train_dataset.csv')#, dataset='train_data/pseudo_label.csv')
+    # # Train custom classifier with Xeno-Canto pseudo-labeled dataset 
+    # mapper.train(model_output_path="checkpoints/custom/XCNet.tflite", csv_filename='train_dataset.csv')#, dataset='train_data/pseudo_label.csv')
 
 
     ### TEST
@@ -669,14 +671,14 @@ if __name__ == "__main__":
     # config["KEEP"] = 'ALL'
     # cfg.set_config(config) # restore config in case we're on Windows to be thread save
 
-    # mapper = BirdMAP(save_path='test_data', custom_classifier_path="checkpoints/custom/XCNet.tflite")
+    # mapper = BirdMAP(save_path='test_data', custom_classifier_path="checkpoints/custom/Rodvinge.tflite")
     # # Extract embeddings from audio files in 'test_data' folder and assign labels with custom classifier
-    # mapper.embeddings(dataset='test_data/', csv_filename='embeddings.csv', predict=True) 
+    # mapper.embeddings(dataset='test_data/test_dataset.csv', csv_filename='embeddings.csv', predict=True) 
 
     # from display import interactive_display
     # interactive_display(mapper.df, save_path=mapper.save_path, thumbnails=True, noise=False)
 
-    # Pseudo-label data and display clusters
+    # # Pseudo-label data and display clusters
     # mapper.pseudo_label(csv_filename='pseudo_label.csv', display=True, thumbnails=True, noise=False)  
 
 

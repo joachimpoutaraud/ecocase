@@ -182,13 +182,14 @@ COMBINE_RESULTS: bool = False
 #####################
 
 # Training data path
-# TRAIN_DATA_PATH = None
-
-# Sample crop mode
-SAMPLE_CROP_MODE: str = "center"
+TRAIN_DATA_PATH = None
+TEST_DATA_PATH = None
 
 # List of non-event classes
 NON_EVENT_CLASSES: list[str] = ["noise", "other", "background", "silence"]
+
+# Sample crop mode
+SAMPLE_CROP_MODE: str = "center"
 
 # Upsampling settings
 UPSAMPLING_RATIO: float = 0.0
