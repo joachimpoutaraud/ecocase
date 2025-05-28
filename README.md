@@ -19,8 +19,8 @@ xc = XenoCanto()
 
 # Query Xeno-Canto database and build dataset from metadata
 xc.data(csv_filename='xc_dataset.csv')
-# Load training data with automatic data labeling
-xc.labeling(data_labeling=True)
+# Label training data and save to cache
+xc.labeling(cache_filename="train_cache.npz")
 # Download audio files from the training dataset
 xc.download()
 ```
