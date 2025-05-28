@@ -1,10 +1,20 @@
+import os
+import shutil
+import pandas as pd
+import numpy as np
+
 import json
+import tqdm
 import time, datetime
 import urllib.request
 from pathlib import Path
-import pandas as pd
+from functools import partial
+from multiprocessing.pool import Pool
 
 import config as cfg
+
+from birdnet_analyzer import audio
+from birdnet_analyzer import model
 
 import warnings
 warnings.filterwarnings(action="ignore")
@@ -16,6 +26,7 @@ class XenoCanto():
     Xeno-Canto metadata is grouped and stored in a pandas Dataframe.
 
     Args:
+        load_audio (bool): If True, loads the data from Xeno-Canto and convert to embeddings. Default is True.
         params_xc (list): List of Xeno-Canto searching parameters to perform the query.
             The main searching parameters include:
             - grp : birds
@@ -47,7 +58,7 @@ class XenoCanto():
                 format_time = False,
                 format_date = False,
                 verbose = True,
-                save_path = None,
+                save_path = 'train_data',
                 ):
 
         self.params_xc = params_xc
@@ -57,27 +68,31 @@ class XenoCanto():
         self.format_date = format_date 
         self.verbose = verbose
         self.save_path = save_path
-        
 
-    def dataset(self, data_path=None, csv_filename=None):
+        # Check whether root directory is existing or not
+        if self.save_path is not None:   
+            if os.path.exists(self.save_path):
+                if self.overwrite:
+                    # Remove directory
+                    shutil.rmtree(str(self.save_path))
+                    # Save dataframe
+                    os.makedirs(self.save_path)      
+            else:      
+                os.makedirs(self.save_path)  
 
+
+    def data(self, csv_filename=None):
         """
         Query Xeno-Canto database and build a dataset from the metadata.
         The dataset is a pandas dataframe containing all the recordings metadata matching the Xeno-Canto searching parameters.
 
         Args:
-            data_path (str, optional): Path to the directory where the data is saved. Default is None.
-            csv_filename (str): Name of the csv file to save the dataset. Default is None.
-                If None, the csv file is not saved. 
+            csv_filename (str, optional): Name of the CSV file to save the dataset. Default is None.
+                If None, the dataset will not be saved.
 
         Returns:
             pandas.DataFrame: Dataframe containing all the recordings metadata matching the Xeno-Canto searching parameters.
         """
-
-        if data_path is not None:
-            #TODO Load audio data with categories from a folder to a dataframe
-            # https://github.com/birdnet-team/BirdNET-Analyzer/blob/2c68450fbee102cea1a1ed08a503d779c15c41bc/birdnet_analyzer/train/utils.py#L105
-            pass
         
         if self.verbose:
             print('\n========================= QUERY DATA =========================\n')
@@ -119,10 +134,10 @@ class XenoCanto():
                 print('\n====================== XENO-CANTO DATASET ======================\n')
                 print('Composition of the dataset:')
                 print('   - Number of audio files: %2.0f' % len(self.df))
-                print('   - Number of species: %2.0f' % len(self.df['en'].unique()))
-                print('   - Unique species: {}'.format(self.df['en'].unique()))
+                print('   - Number of species: %2.0f' % len(self.df['categories'].unique()))
+                print('   - Unique species: {}\n'.format(sorted(self.df['categories'].unique())))
             else:
-                print('\n*** WARNING ***\nThe dataframe is empty.')   
+                print('*** WARNING ***\nThe dataframe is empty.')   
                 print("No audio recording was found with the parameters:\n{}".format(self.params_xc))
                 return
                 
@@ -139,7 +154,7 @@ class XenoCanto():
                 csv_filename = save_path / csv_filename
             # Save dataframe
             self.df.to_csv(csv_filename, sep=";", encoding='utf-8', index=False, index_label='id') 
-            
+
         return self.df
     
 
@@ -261,81 +276,42 @@ class XenoCanto():
 
         return df
     
+    
+    def load(self, dataset=None, data_labeling=True, csv_filename=None):
 
-    def _load_training_data(cache_mode=None, cache_file="", progress_callback=None):
-        """Loads the data for training.
+        if dataset is not None:
+            self.df = pd.read_csv(dataset, sep=";")
 
-        Reads all subdirectories of "config.TRAIN_DATA_PATH" and uses their names as new labels.
+        x, y = [], []
 
-        These directories should contain all the training data for each label.
+        # Create a new dataframe for labeling
+        if data_labeling:
+            df_labeling = pd.DataFrame()
 
-        If a cache file is provided, the training data is loaded from there.
-
-        Args:
-            cache_mode: Cache mode. Can be 'load' or 'save'. Defaults to None.
-            cache_file: Path to cache file.
-
-        Returns:
-            A tuple of (x_train, y_train, x_test, y_test, labels).
-        """
-
-        import os
-        import numpy as np
-        import utils
-
-        # Load from cache
-        if cache_mode == "load":
-            if os.path.isfile(cache_file):
-                print(f"\t...loading from cache: {cache_file}", flush=True)
-                x_train, y_train, x_test, y_test, labels, cfg.BINARY_CLASSIFICATION, cfg.MULTI_LABEL = (
-                    utils.load_from_cache(cache_file)
-                )
-                return x_train, y_train, x_test, y_test, labels
-            else:
-                print(f"\t...cache file not found: {cache_file}", flush=True)
-
-        # Print train and test data path as confirmation
-        print(f"\t...train data path: {cfg.TRAIN_DATA_PATH}", flush=True)
-        print(f"\t...test data path: {cfg.TEST_DATA_PATH}", flush=True)
-
-        # Get list of subfolders as labels
-        train_folders = list(sorted(utils.list_subdirectories(cfg.TRAIN_DATA_PATH)))
-
-        # Read all individual labels from the folder names
-        labels = []
-
-        for folder in train_folders:
-            labels_in_folder = folder.split(",")
-            for label in labels_in_folder:
-                if label not in labels:
-                    labels.append(label)
-
-        # Sort labels
-        labels = list(sorted(labels))
+        unique_categories = self.df['categories'].unique()
+        categories = list(sorted(unique_categories))
 
         # Get valid labels
-        valid_labels = [
-            label for label in labels if label.lower() not in cfg.NON_EVENT_CLASSES and not label.startswith("-")
-        ]
+        valid_labels = [label for label in categories if label.lower() not in cfg.NON_EVENT_CLASSES and not label.startswith("-")]
 
         # Check if binary classification
         cfg.BINARY_CLASSIFICATION = len(valid_labels) == 1
 
         # Validate the classes for binary classification
         if cfg.BINARY_CLASSIFICATION:
-            if len([f for f in train_folders if f.startswith("-")]) > 0:
+            if len([f for f in categories if f.startswith("-")]) > 0:
                 raise Exception(
                     "Negative labels can't be used with binary classification",
                     "validation-no-negative-samples-in-binary-classification",
                 )
-            if len([f for f in train_folders if f.lower() in cfg.NON_EVENT_CLASSES]) == 0:
+            if len([f for f in categories if f.lower() in cfg.NON_EVENT_CLASSES]) == 0:
                 raise Exception(
                     "Non-event samples are required for binary classification",
                     "validation-non-event-samples-required-in-binary-classification",
                 )
 
         # Check if multi label
-        cfg.MULTI_LABEL = len(valid_labels) > 1 and any("," in f for f in train_folders)
+        cfg.MULTI_LABEL = len(valid_labels) > 1 and any("," in f for f in categories)
 
         # Check if multi-label and binary classficication
         if cfg.BINARY_CLASSIFICATION and cfg.MULTI_LABEL:
@@ -343,99 +319,414 @@ class XenoCanto():
 
         # Only allow repeat upsampling for multi-label setting
         if cfg.MULTI_LABEL and cfg.UPSAMPLING_RATIO > 0 and cfg.UPSAMPLING_MODE != "repeat":
-            raise Exception("Only repeat-upsampling ist available for multi-label", "validation-only-repeat-upsampling-for-multi-label")
+            raise Exception(
+                "Only repeat-upsampling ist available for multi-label", "validation-only-repeat-upsampling-for-multi-label"
+            )
 
-        # Load training data
-        x_train = []
-        y_train = []
-        x_test = []
-        y_test = []
+        for cat in categories:
+            # Get label vector
+            label_vector = np.zeros((len(valid_labels),), dtype="float32")
+            cat_labels = cat.split(",")
 
-        def load_data(data_path, allowed_folders):
-            x = []
-            y = []
-            
-            folders = list(sorted(utils.list_subdirectories(data_path)))
+            for label in cat_labels:
+                if label.lower() not in cfg.NON_EVENT_CLASSES and not label.startswith("-"):
+                    label_vector[valid_labels.index(label)] = 1
+                elif (
+                    label.startswith("-") and label[1:] in valid_labels
+                ):  # Negative labels need to be contained in the valid labels
+                    label_vector[valid_labels.index(label[1:])] = -1
 
-            for folder in folders:
-                if folder not in allowed_folders:
-                    print(f"Skipping folder {folder} because it is not in the training data.", flush=True)
-                    continue
+            # Get list of file urls
+            file_urls = self.df[self.df['categories'] == cat]['file'].tolist()
 
-                # Get label vector
-                label_vector = np.zeros((len(valid_labels),), dtype="float32")
-                folder_labels = folder.split(",")
+            timestamps = []
+            file_paths = []
+            cat_embeddings = []
 
-                for label in folder_labels:
-                    if label.lower() not in cfg.NON_EVENT_CLASSES and not label.startswith("-"):
-                        label_vector[valid_labels.index(label)] = 1
-                    elif (
-                        label.startswith("-") and label[1:] in valid_labels
-                    ):  # Negative labels need to be contained in the valid labels
-                        label_vector[valid_labels.index(label[1:])] = -1
+            # Load files using thread pool
+            with Pool(cfg.CPU_THREADS) as p:
+                tasks = []
 
-                # Get list of files
-                # Filter files that start with '.' because macOS seems to them for temp files.
-                files = filter(
-                    os.path.isfile,
-                    (
-                        os.path.join(data_path, folder, f)
-                        for f in sorted(os.listdir(os.path.join(data_path, folder)))
-                        if not f.startswith(".") and f.rsplit(".", 1)[-1].lower() in cfg.ALLOWED_FILETYPES
-                    ),
-                )
+                for f in file_urls:
+                    task = p.apply_async(partial(self.load_audio_file, f=f, label_vector=label_vector, config=cfg.get_config()))
+                    tasks.append(task)
 
-                # Load files using thread pool
-                with Pool(cfg.CPU_THREADS) as p:
-                    tasks = []
-
-                    for f in files:
-                        task = p.apply_async(
-                            partial(_load_audio_file, f=f, label_vector=label_vector, config=cfg.get_config())
-                        )
-                        tasks.append(task)
-
-                    # Wait for tasks to complete and monitor progress with tqdm
-                    num_files_processed = 0
-
-                    with tqdm.tqdm(total=len(tasks), desc=f" - loading '{folder}'", unit="f") as progress_bar:
+                # Wait for tasks to complete and monitor progress with tqdm
+                if self.verbose:
+                    with tqdm.tqdm(total=len(tasks), desc=f"Loading '{cat}' species", unit="f") as progress_bar:
                         for task in tasks:
                             result = task.get()
-                            # Make sure result is not empty
-                            # Empty results might be caused by errors when loading the audio file
-                            # TODO: We should check for embeddings size in result, otherwise we can't add them to the training data
+
+                            # Check if the result is not empty
                             if len(result[0]) > 0:
+                                if data_labeling:
+                                    cat_embeddings += result[0]
+                                    timestamps += result[2]
+                                    file_paths += result[3]
+
+                                else:
+                                    x += result[0]
+                                    y += result[1]
+
+                            # Update progress bar
+                            progress_bar.update(1)
+                else:
+                    for task in tasks:
+                        result = task.get()
+
+                        # Check if the result is not empty
+                        if len(result[0]) > 0:
+                            if data_labeling:
+                                cat_embeddings += result[0]
+                                timestamps += result[2]
+                                file_paths += result[3]
+
+                            else:
                                 x += result[0]
                                 y += result[1]
 
-                            num_files_processed += 1
-                            progress_bar.update(1)
+            if data_labeling:
+                from cluster import estimate_parameters
 
-                            if progress_callback:
-                                progress_callback(num_files_processed, len(tasks), folder)
+                # Format timestamps and embeddings into new dataframe 
+                cols = ['start', 'end'] 
+                cols += ['emb' + str(idx).zfill(4) for idx in range(1, len(cat_embeddings[0]) + 1)] 
+                data = np.concatenate([np.asarray(timestamps), np.asarray(cat_embeddings)], axis=1)
 
-            return np.array(x, dtype="float32"), np.array(y, dtype="float32")
+                # Create a dataframe with the data
+                df_single_categories = pd.DataFrame(data=data, columns=cols)
+                df_single_categories['categories'] = cat
+                df_single_categories['file'] = file_paths
 
-        x_train, y_train = load_data(cfg.TRAIN_DATA_PATH, train_folders)
+                # Find the cluster for each categories separately 
+                if len(df_single_categories) < 3: # test if the number of ROIs is higher than 2
+                    df_single_categories["cluster_number"] = -1 # noise
+                    df_single_categories["pseudo_label"] = 0 # noise
+                    
+                    if self.verbose:
+                        print("Only {} ROIs. It requires at least 3 ROIs to perform clustering".format(len(df_single_categories)))
+                        
+                else:
+                    config = cfg.get_config()
 
-        if cfg.TEST_DATA_PATH and cfg.TEST_DATA_PATH != cfg.TRAIN_DATA_PATH:
-            test_folders = list(sorted(utils.list_subdirectories(cfg.TEST_DATA_PATH)))
-            allowed_test_folders = [
-                folder for folder in test_folders if folder in train_folders and not folder.startswith("-")
-            ]
-            x_test, y_test = load_data(cfg.TEST_DATA_PATH, allowed_test_folders)
+                    # Prepare the embeddings of the categories
+                    X = df_single_categories.loc[:, df_single_categories.columns.str.startswith("emb")].to_numpy() 
+
+                    if self.verbose:
+                        print(f"Labeling '{cat}' species: {len(df_single_categories)} ROIs\n")
+
+                    if cfg.MIN_PTS == 'auto':
+                        # Automatic estimation of the clustering algorithm parameters
+                        min_samples = 3
+                        dbscan_parameters = []
+                        best_score = None
+                        
+                        # Multi-CPU processsing to estimate the parameters                  
+                        with Pool(cfg.CPU_THREADS - 1) as pool:
+                            while True:
+                                params = pool.apply(estimate_parameters, args=(X, config, min_samples, cfg.METRIC))
+                                if not np.isnan(params[0]):
+                                    dbscan_parameters.append(params)
+                                # Check if the current score is lower than the previous best score
+                                if best_score is not None and params[0] <= best_score[0]:
+                                    break
+                                # Update the best score
+                                best_score = params
+                                # Increment the number of components
+                                min_samples += 1
+                            
+                        # Use the best score found
+                        dbcv = best_score[0]
+                        cluster = best_score[1] 
+                        eps = best_score[2]
+                        min_samples = best_score[3]
+
+                    else:       
+                        if cfg.MIN_PTS > 1:
+                            min_samples = round(cfg.MIN_PTS)
+                        else:
+                            min_samples = 3 
+
+                        dbcv, cluster, eps, min_samples = estimate_parameters(X, config, min_samples, cfg.METRIC)
+
+                    if self.verbose:                
+                        # Get the predicted labels and the number of clusters (excluding noise)
+                        clusters = len(np.unique(cluster.labels_[cluster.labels_ >= 0])) 
+                        noisy_percentage = round(np.sum(cluster.labels_ == -1) / X.shape[0], 2) * 100           
+                        print(f'Number of clusters found (excluding noise): {clusters} (min_samples={min_samples}, eps={eps})')
+                        print(f'Percentage of noise/outliers data: {noisy_percentage}%')
+                        print(f'Density-Based Clustering Validation: {round(dbcv,4)}\n')
+
+                    # Add the label found with the clustering
+                    df_single_categories["cluster_number"] = cluster.labels_.reshape(-1, 1)
+            
+                    # Add the automatic label (SIGNAL = 1 or NOISE = 0) into the pseudo_label's column of the dataframe
+                    # Test if we want to consider only the biggest or all clusters that are not noise (-1) to be signal
+                    
+                    if cfg.KEEP == 'BIGGEST':
+                        # Set by default to 0 the pseudo_label of all
+                        df_single_categories.loc["pseudo_label"] = int(0)
+
+                        # Find the cluster ID of the biggest cluster that is not noise
+                        try:
+                            # Set to 1 the pseudo_label of the biggest cluster
+                            biggest_cluster_ID = df_single_categories.loc[df_single_categories["cluster_number"] >= 0]["cluster_number"].value_counts().idxmax()
+                            df_single_categories.loc[df_single_categories["cluster_number"] == biggest_cluster_ID, "pseudo_label"] = int(1)
+                        except:
+                            # If there is only noise
+                            pass
+                        
+                    elif cfg.KEEP == 'ALL':                
+                        # Set by to 0 the pseudo_label of the noise (cluster ID = -1)
+                        df_single_categories.loc[df_single_categories["cluster_number"] < 0, "pseudo_label"] = int(0)
+                        # Set by to 1 the pseudo_label of the signal (cluster ID >= 0)
+                        df_single_categories.loc[df_single_categories["cluster_number"] >= 0, "pseudo_label"] = int(1)
+
+                
+                # Concatenate dataFrames
+                df_labeling = pd.concat([df_labeling, df_single_categories], ignore_index=True)
+
+        # Keep only data pseudo-labeled as signal
+        self.df = df_labeling[df_labeling.pseudo_label == 1]
+        # Remove '0' categories if it exists
+        self.df = self.df[self.df.categories != 0]
+        # Rearrange index to be sure to have unique and increasing index
+        self.df.reset_index(drop=True, inplace=True)
+
+        # Get the embeddings
+        x = self.df.loc[:, self.df.columns.str.startswith("emb")].to_numpy()
+        # Perform one-hot encoding on categories
+        one_hot_encoded = pd.get_dummies(self.df.categories.astype(str))
+        y = one_hot_encoded.values
+
+        if csv_filename is not None:            
+            if self.save_path is not None:
+                # Format save_path into Path
+                save_path = Path(self.save_path)
+                # Save and append dataframe 
+                csv_filename = save_path / csv_filename
+            # Save dataframe
+            self.df.to_csv(csv_filename, sep=";", encoding='utf-8', index=False, index_label='id')          
+
+        return np.array(x, dtype="float32"), np.array(y, dtype="float32")
+
+    
+    def load_audio_file(self, f, label_vector, config):
+        """
+        Load an audio file and extract features.
+
+        Args:
+            f: Path to the audio file.
+            label_vector: The label vector for the file.
+
+        Returns:
+            A tuple of (x_train, y_train).
+        """
+
+        x_train = []
+        y_train = []
+
+        # restore config in case we're on Windows to be thread save
+        cfg.set_config(config)
+
+        # Try to load the audio file
+        try:
+            # Load audio
+            sig, rate = self.open_audio_file(
+                f,
+                duration=cfg.SIG_LENGTH if cfg.SAMPLE_CROP_MODE == "first" else None,
+                fmin=cfg.BANDPASS_FMIN,
+                fmax=cfg.BANDPASS_FMAX
+            )
+
+        # if anything happens print the error and ignore the file
+        except Exception as e:
+            # Print Error
+            print(f"\t Error when loading file {f}", flush=True)
+            print(f"\t {e}", flush=True)
+            return np.array([]), np.array([])
+
+        # Crop training samples
+        if cfg.SAMPLE_CROP_MODE == "center":
+            sig_splits = [audio.crop_center(sig, rate, cfg.SIG_LENGTH)]
+        elif cfg.SAMPLE_CROP_MODE == "first":
+            sig_splits = [audio.split_signal(sig, rate, cfg.SIG_LENGTH, cfg.SIG_OVERLAP, cfg.SIG_MINLEN)[0]]
+        elif cfg.SAMPLE_CROP_MODE == "smart":
+            # Detect peaks in audio energy to identify potential signals
+            sig_splits = audio.smart_crop_signal(sig, rate, cfg.SIG_LENGTH, cfg.SIG_OVERLAP, cfg.SIG_MINLEN)
         else:
-            x_test = np.array([])
-            y_test = np.array([])
+            sig_splits = audio.split_signal(sig, rate, cfg.SIG_LENGTH, cfg.SIG_OVERLAP, cfg.SIG_MINLEN)
 
-        # Save to cache?
-        if cache_mode == "save":
-            print(f"\t...saving training data to cache: {cache_file}", flush=True)
-            try:
-                # Only save the valid labels
-                utils.save_to_cache(cache_file, x_train, y_train, x_test, y_test, valid_labels)
-            except Exception as e:
-                print(f"\t...error saving cache: {e}", flush=True)
+        # Get audio timestamps and file paths
+        timestamps = []
+        file_paths = []
+        start = 0
+        end = start + cfg.SIG_LENGTH
 
-        # Return only the valid labels for further use
-        return x_train, y_train, x_test, y_test, valid_labels
+        for s in range(len(sig_splits)):
+            timestamps.append([start, end])
+            file_paths.append(f)
+            # Advance start and end
+            start += cfg.SIG_LENGTH - cfg.SIG_OVERLAP
+            end = start + cfg.SIG_LENGTH
+        
+        # Get feature embeddings
+        batch_size = 1  # turns out that batch size 1 is the fastest, probably because of having to resize the model input when the number of samples in a batch changes
+        for i in range(0, len(sig_splits), batch_size):
+            batch_sig = sig_splits[i : i + batch_size]
+            batch_label = [label_vector] * len(batch_sig)
+            e = model.embeddings(batch_sig)
+
+            # Add to training data
+            x_train.extend(e)
+            y_train.extend(batch_label)
+
+        return x_train, y_train, timestamps, file_paths
+
+
+    def download(self, dataset=None, csv_filename=None):
+        """Download audio files from dataframe.
+        
+        Args:
+            dataset: Path to dataset. This could be a pd.Dataframe or the path to a pandas DataFrame or audio recordings folder.
+            save_path: Path to the directory where the whole dataset will be saved. 
+            verbose (bool, optional): If True, prints messages during the execution of the function. Default is True. 
+            csv_filename (str, optional): The name of the csv file to save the ROIs. Default is None.
+        """ 
+            
+        if self.verbose:
+            print('\n====================== DOWNLOAD AUDIO FILES ======================\n')
+            
+        # Check if dataset is a path to a dataframe, audio file or folder
+        if type(dataset) == str:
+            ext = os.path.splitext(dataset)[1]
+            # Check file extension
+            if ext == ".csv": 
+                import pandas as pd
+                self.df = pd.read_csv(dataset, sep=";")
+            # else:
+            #     from audio import saveAudioAsDataframe
+            #     # If it's not a csv file, we assume it's an audio file or a folder with audio files
+            #     self.df = saveAudioAsDataframe(dataset)         
+
+        # Create folders for each species if needed
+        if 'categories' in self.df.columns:
+            species_list = [s.replace(' ', '_') for s in self.df.categories.unique()]
+
+            # Create folders for each species
+            for species in species_list:
+                os.makedirs(os.path.join(self.save_path, species), exist_ok=True)
+
+        # Process rows in parallel
+        nb_cpu = os.cpu_count()
+        updated_file_paths = []
+        
+        with tqdm.tqdm(total=len(self.df), desc="Download audio files") as pbar:
+            with Pool(processes=nb_cpu - 1) as pool:
+                # Prepare arguments for starmap
+                rows = [row for _, row in self.df.iterrows()]
+                # Use partial to pass save_path if needed, or just row if not
+                for output_file in pool.imap(self.write_audio_file, rows):
+                    updated_file_paths.append(output_file)
+                    pbar.update(1)
+
+
+        if csv_filename is not None:
+            # Format save_path into Path
+            save_path = Path(self.save_path)
+            # Save and append dataframe 
+            csv_filename = save_path / csv_filename
+            
+            # Update the audio file paths of the dataframe 
+            self.df['file'] = updated_file_paths         
+            self.df.to_csv(csv_filename, index=False, sep=";")
+
+
+    def write_audio_file(self, row):
+        
+        import soundfile as sf
+        from urllib.parse import urlparse
+        
+        try:
+            # Check if the file is a URL or a local file
+            path = urlparse(row['file']).path
+            id_number = path.split('/')[1]
+
+            if 'start' in row:
+                sig, rate = self.open_audio_file(row['file'], cfg.SAMPLE_RATE, row.start, duration=row.end - row.start)
+                output_file = os.path.join(os.path.join(self.save_path, row['categories'].replace(' ', '_')), f"XC{int(id_number)}_{int(row['start'])}_{int(row['end'])}.wav")
+            else:
+                sig, rate = self.open_audio_file(row['file'], cfg.SAMPLE_RATE)
+                output_file = os.path.join(os.path.join(self.save_path, row['categories'].replace(' ', '_')), f"XC{int(id_number)}.wav")
+
+            sf.write(output_file, sig, rate)
+            
+            # Return updated file path
+            return output_file
+            
+        except Exception as ex:
+            print(f"Error: Cannot analyze audio file {row.file}.", flush=True)
+            from birdnet_analyzer import utils
+            utils.write_error_log(ex)
+
+
+    def open_audio_file(self, path: str, rate=cfg.SAMPLE_RATE, offset=0.0, duration=None, fmin=None, fmax=None):
+        """
+        Open an audio file.
+
+        Opens an audio file with FFmpeg and the given settings.
+
+        Args:
+            path: Path or URL to the audio file.
+            sample_rate: The sample rate at which the file should be processed.
+            offset: The starting offset.
+            duration: Maximum duration of the loaded content.
+
+        Returns:
+            Returns the audio time series and the sampling rate.
+        """
+
+        def open_audio_with_ffmpeg(command, retries=3, delay=30):
+
+            import subprocess
+            import time
+
+            for attempt in range(retries):
+                process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                out, err = process.communicate()
+                
+                if process.returncode == 0:
+                    return np.frombuffer(out, dtype=np.int16)
+                else:
+                    if "503" in err.decode():
+                        time.sleep(delay)
+                    else:
+                        break
+            
+            return np.frombuffer(out, dtype=np.int16)
+        
+        if duration is None:
+            command = ['ffmpeg', '-y', '-hide_banner', '-ss', str(offset), '-i', str(path), '-f', 's16le', '-ar', str(rate), '-ac', '1', '-'] 
+        else:
+            command = ['ffmpeg', '-y', '-hide_banner', '-ss', str(offset), '-t', str(duration), '-i', str(path), '-f', 's16le', '-ar', str(rate), '-ac', '1', '-']  
+
+        # Open the audio file with FFmpeg         
+        sig = open_audio_with_ffmpeg(command)
+
+        if fmin is not None and fmax is not None:
+            sig = audio.bandpass(sig, rate, fmin, fmax)
+
+        return sig, rate
+    
+
+if __name__ == "__main__":
+
+    # Create instance of XenoCanto class
+    xc = XenoCanto()
+    
+    # Query Xeno-Canto database and build dataset from metadata
+    xc.data(csv_filename='xc_dataset.csv')
+    # Load training data with automatic data labeling
+    xc.load(data_labeling=True)
+    # Download audio files from the training dataset
+    xc.download()

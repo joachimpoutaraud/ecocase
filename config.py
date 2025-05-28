@@ -6,72 +6,18 @@ import os
 
 RANDOM_SEED: int = 2025         # Fixed random seed
 
-#########################
-# XENO-CANTO PARAMETERS #
-#########################
-
-# Number of audio files to download for each species
-NUM_FILES: int = 100          
-# Xeno-Canto scientific species (e.g. ['Columba palumbus','Fringilla coelebs']) 
-# If None, species will be requested according to the Xeno-Canto searching parameters
-SPECIES_XC: list[str] = [
-    # TINAMOUS
-    'Tinamus major',
-    'Crypturellus brevirostris',
-    'Crypturellus soui',
-    'Crypturellus cinereus',
-    'Crypturellus variegatus',
-    # POTOOS
-    'Nyctibius grandis',
-    'Nyctibius griseus',
-    'Nyctibius bracteatus',
-    'Nyctibius aethereus',
-    'Nyctibius leucopterus', 
-    # FALCONS
-    'Micrastur ruficollis',
-    'Micrastur gilvicollis',
-    'Micrastur mirandollei',
-    'Micrastur semitorquatus', 
-    # OWLS
-    'Megascops roraimae',
-    'Megascops watsonii', 
-    'Lophostrix cristata',
-    'Pulsatrix perspicillata',
-    'Strix virgata',
-    'Strix huhula',
-    'Glaucidium hardyi',
-    # NIGHTJARS
-    'Lurocalis semitorquatus',
-    'Hydropsalis maculicaudus',
-    'Hydropsalis cayennensis',
-    'Nyctiprogne leucopyga',
-    'Chordeiles acutipennis',
-    'Chordeiles nacunda',
-    'Nyctipolus nigrescens', 
-    'Nyctidromus albicollis',
-    'Hydropsalis climacocerca'
-]     
-# Xeno-Canto searching parameters (https://www.xeno-canto.org/help/search)
-PARAMS_XC: list[str] = [                 
-    'grp:birds',                # Group to which the species belongs (birds, bats, frogs, grasshoppers) 
-    # 'type:song',                # Type of the bird sound
-    'len:"<100"',               # Length of the recording (seconds)
-    'q:">D"',                   # Quality rating of the recording
-    'area:america',             # Continental area: africa, america, asia, australia, europe
-    # 'box:-5.681584,-71.740723,9.535749,-38.364258', # Geographical bounding box (min_lat, min_lon, max_lat, max_lon)
-    # Radius search easily made using bboxfinder.com (coordinate format:"Lat / Lng" + draw a circle with radius ~ 500km, and copy map)
-] 
-
 ##########################
 # MODEL PATHS AND CONFIG #
 ##########################
 
+SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
+
 MODEL_VERSION: str = "V2.4"
-PB_MODEL: str = "checkpoints/V2.4/BirdNET_GLOBAL_6K_V2.4_Model"
-MODEL_PATH: str = "checkpoints/V2.4/BirdNET_GLOBAL_6K_V2.4_Model_FP32.tflite" 
-LABELS_FILE: str = "checkpoints/V2.4/BirdNET_GLOBAL_6K_V2.4_Labels.txt"
-MDATA_MODEL_PATH: str = "checkpoints/V2.4/BirdNET_GLOBAL_6K_V2.4_MData_Model_V2_FP16.tflite"
-TRANSLATED_LABELS_PATH: str = "labels/V2.4"
+PB_MODEL: str = os.path.join(SCRIPT_DIR, "checkpoints/V2.4/BirdNET_GLOBAL_6K_V2.4_Model")
+MODEL_PATH: str = os.path.join(SCRIPT_DIR, "checkpoints/V2.4/BirdNET_GLOBAL_6K_V2.4_Model_FP32.tflite")
+MDATA_MODEL_PATH: str = os.path.join(SCRIPT_DIR, "checkpoints/V2.4/BirdNET_GLOBAL_6K_V2.4_MData_Model_V2_FP16.tflite")
+LABELS_FILE: str = os.path.join(SCRIPT_DIR, "checkpoints/V2.4/BirdNET_GLOBAL_6K_V2.4_Labels.txt")
+TRANSLATED_LABELS_PATH: str = os.path.join(SCRIPT_DIR, "labels/V2.4")
 
 # Path to custom trained classifier
 # If None, no custom classifier will be used
@@ -101,6 +47,62 @@ BANDPASS_FMIN: int = 150
 BANDPASS_FMAX: int = 5000
 
 #########################
+# XENO-CANTO PARAMETERS #
+#########################
+
+# Number of audio files to download for each species
+NUM_FILES: int = 50         
+# Xeno-Canto scientific species (e.g. ['Columba palumbus','Fringilla coelebs']) 
+# If None, species will be requested according to the Xeno-Canto searching parameters
+SPECIES_XC: list[str] = [
+    # TINAMOUS
+    'Tinamus major',
+    'Crypturellus brevirostris',
+    'Crypturellus soui',
+    # 'Crypturellus cinereus',
+    # 'Crypturellus variegatus',
+    # # POTOOS
+    # 'Nyctibius grandis',
+    # 'Nyctibius griseus',
+    # 'Nyctibius bracteatus',
+    # 'Nyctibius aethereus',
+    # 'Nyctibius leucopterus', 
+    # # FALCONS
+    # 'Micrastur ruficollis',
+    # 'Micrastur gilvicollis',
+    # 'Micrastur mirandollei',
+    # 'Micrastur semitorquatus', 
+    # # OWLS
+    # 'Megascops roraimae',
+    # 'Megascops watsonii', 
+    # 'Lophostrix cristata',
+    # 'Pulsatrix perspicillata',
+    # 'Strix virgata',
+    # 'Strix huhula',
+    # 'Glaucidium hardyi',
+    # # NIGHTJARS
+    # 'Lurocalis semitorquatus',
+    # 'Hydropsalis maculicaudus',
+    # 'Hydropsalis cayennensis',
+    # 'Nyctiprogne leucopyga',
+    # 'Chordeiles acutipennis',
+    # 'Chordeiles nacunda',
+    # 'Nyctipolus nigrescens', 
+    # 'Nyctidromus albicollis',
+    # 'Hydropsalis climacocerca'
+]     
+# Xeno-Canto searching parameters (https://www.xeno-canto.org/help/search)
+PARAMS_XC: list[str] = [                 
+    'grp:birds',                # Group to which the species belongs (birds, bats, frogs, grasshoppers) 
+    # 'type:song',                # Type of the bird sound
+    f'len:"{int(SIG_LENGTH)}-100"',               # Length of the recording (seconds)
+    'q:">D"',                   # Quality rating of the recording
+    'area:america',             # Continental area: africa, america, asia, australia, europe
+    # 'box:-5.681584,-71.740723,9.535749,-38.364258', # Geographical bounding box (min_lat, min_lon, max_lat, max_lon)
+    # Radius search easily made using bboxfinder.com (coordinate format:"Lat / Lng" + draw a circle with radius ~ 500km, and copy map)
+] 
+
+#########################
 #  CLUSTERING SETTINGS  #
 #########################
 
@@ -108,7 +110,7 @@ MIN_PTS = 'auto'                  # number of samples in a neighborhood for a po
 EPS = 'auto'                      # maximum distance between two samples for one to be considered as in the neighborhood of the other {float or 'auto'}
 METRIC: str = 'cosine'            # metric to use when calculating distance between instances in a feature array.
 METHOD: str = 'HDBSCAN'           # cluster method that allow some points beeing outside of a cluster {HDBSCAN, DBSCAN}
-KEEP: str = 'ALL'                 # define if we want to keep all the clusters or only the biggest cluster, while the rest is discarded as noise {BIGGEST, ALL}
+KEEP: str = 'BIGGEST'             # define if we want to keep all the clusters or only the biggest cluster, while the rest is discarded as noise {BIGGEST, ALL}
 
 #####################
 # METADATA SETTINGS #
@@ -182,14 +184,14 @@ COMBINE_RESULTS: bool = False
 #####################
 
 # Training data path
-TRAIN_DATA_PATH = None
+TRAIN_DATA_PATH = "C:/Users/JOPT/OneDrive - Ramboll/Documents/GitHub/train_data"
 TEST_DATA_PATH = None
 
 # List of non-event classes
 NON_EVENT_CLASSES: list[str] = ["noise", "other", "background", "silence"]
 
 # Sample crop mode
-SAMPLE_CROP_MODE: str = "center"
+SAMPLE_CROP_MODE: str = None
 
 # Upsampling settings
 UPSAMPLING_RATIO: float = 0.0

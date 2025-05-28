@@ -1,0 +1,6 @@
+name: birdmap
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+    - https://github.com/birdnet-team/BirdNET-Analyzer/archive/refs/heads/main.zip
