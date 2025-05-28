@@ -7,7 +7,7 @@ SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
 #################
 
 # Random seed for gaussian noise
-RANDOM_SEED: int = 42
+RANDOM_SEED: int = 2025
 
 ##########################
 # Model paths and config #
@@ -45,14 +45,88 @@ SIG_FMIN: int = 0
 SIG_FMAX: int = 15000
 
 # Settings for bandpass filter
-BANDPASS_FMIN: int = 0
-BANDPASS_FMAX: int = 15000
+BANDPASS_FMIN: int = 150
+BANDPASS_FMAX: int = 5000
 
 # Top N species to display in selection table, ignored if set to None
 TOP_N = None
 
 # Audio speed
 AUDIO_SPEED: float = 1.0
+
+# ---------------------------------------------------------------------------------------------------------------------------------------------------------------- #
+
+#########################
+# Xeno-Canto parameters #
+#########################
+
+# Number of audio files to download for each species
+NUM_FILES: int = 10  
+
+# Xeno-Canto scientific species (e.g. ['Columba palumbus','Fringilla coelebs']) 
+# If None, species will be requested according to the Xeno-Canto searching parameters
+SPECIES_XC: list[str] = [
+    # TINAMOUS
+    'Tinamus major',
+    'Crypturellus brevirostris',
+    'Crypturellus soui',
+    # 'Crypturellus cinereus',
+    # 'Crypturellus variegatus',
+    # # POTOOS
+    # 'Nyctibius grandis',
+    # 'Nyctibius griseus',
+    # 'Nyctibius bracteatus',
+    # 'Nyctibius aethereus',
+    # 'Nyctibius leucopterus', 
+    # # FALCONS
+    # 'Micrastur ruficollis',
+    # 'Micrastur gilvicollis',
+    # 'Micrastur mirandollei',
+    # 'Micrastur semitorquatus', 
+    # # OWLS
+    # 'Megascops roraimae',
+    # 'Megascops watsonii', 
+    # 'Lophostrix cristata',
+    # 'Pulsatrix perspicillata',
+    # 'Strix virgata',
+    # 'Strix huhula',
+    # 'Glaucidium hardyi',
+    # # NIGHTJARS
+    # 'Lurocalis semitorquatus',
+    # 'Hydropsalis maculicaudus',
+    # 'Hydropsalis cayennensis',
+    # 'Nyctiprogne leucopyga',
+    # 'Chordeiles acutipennis',
+    # 'Chordeiles nacunda',
+    # 'Nyctipolus nigrescens', 
+    # 'Nyctidromus albicollis',
+    # 'Hydropsalis climacocerca'
+] 
+
+# Xeno-Canto searching parameters 
+# (https://www.xeno-canto.org/help/search)
+
+PARAMS_XC: list[str] = [                 
+    'grp:birds',                      # Group to which the species belongs (birds, bats, frogs, grasshoppers) 
+    # 'type:song',                      # Type of the bird sound
+    f'len:"{int(SIG_LENGTH)}-100"',                    # Length of the recording (seconds)
+    'q:">D"',                         # Quality rating of the recording
+    'area:america',                   # Continental area: africa, america, asia, australia, europe
+    # 'box:-5.681584,-71.740723,9.535749,-38.364258', # Geographical bounding box (min_lat, min_lon, max_lat, max_lon)
+    # Radius search easily made using bboxfinder.com (coordinate format:"Lat / Lng" + draw a circle with radius ~ 500km, and copy map)
+] 
+
+############################
+#  Data-labeling settings  #
+############################
+
+MIN_PTS = 'auto'                      # Number of samples in a neighborhood for a point to be considered as a core point {int or 'auto'}
+EPS = 'auto'                          # Maximum distance between two samples for one to be considered as in the neighborhood of the other {float or 'auto'}
+METRIC: str = 'cosine'                # Metric to use when calculating distance between instances in a feature array.
+METHOD: str = 'HDBSCAN'               # Cluster method that allow some points beeing outside of a cluster {HDBSCAN, DBSCAN}
+KEEP: str = 'BIGGEST'                 # Define if we want to keep all the clusters or only the biggest cluster, while the rest is discarded as noise {BIGGEST, ALL}
+
+# ---------------------------------------------------------------------------------------------------------------------------------------------------------------- #
 
 #####################
 # Metadata settings #
@@ -132,7 +206,7 @@ COMBINE_RESULTS: bool = False
 #####################
 
 # Sample crop mode
-SAMPLE_CROP_MODE: str = "center"
+SAMPLE_CROP_MODE: str = ""
 
 # List of non-event classes
 NON_EVENT_CLASSES: list[str] = ["noise", "other", "background", "silence"]
@@ -182,14 +256,14 @@ TRAINED_MODEL_OUTPUT_FORMAT: str = "tflite"
 TRAINED_MODEL_SAVE_MODE: str = "replace"
 
 # Cache settings
-TRAIN_CACHE_MODE: str | None = None
+TRAIN_CACHE_MODE: str = "load"
 TRAIN_CACHE_FILE: str = "train_cache.npz"
 
 # Use automatic Hyperparameter tuning
-AUTOTUNE: bool = False
+AUTOTUNE: bool = True
 
 # How many trials are done for the hyperparameter tuning
-AUTOTUNE_TRIALS: int = 50
+AUTOTUNE_TRIALS: int = 10
 
 # How many executions per trial are done for the hyperparameter tuning
 # Mutliple executions will be averaged, so the evaluation is more consistent
@@ -231,7 +305,6 @@ CUSTOM_CLASSIFIER = None
 ######################
 # Get and set config #
 ######################
-
 
 def get_config():
     return {k: v for k, v in globals().items() if k.isupper()}

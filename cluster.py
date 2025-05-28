@@ -11,7 +11,7 @@ import hdbscan
 from hdbscan.validity import validity_index
 from kneed import KneeLocator
 
-import config as cfg
+from birdnet_analyzer import config as cfg
 
 import warnings
 warnings.filterwarnings(action="ignore")

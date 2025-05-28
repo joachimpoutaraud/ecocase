@@ -11,13 +11,15 @@ from pathlib import Path
 from functools import partial
 from multiprocessing.pool import Pool
 
-import config as cfg
+from cluster import estimate_parameters
 
 from birdnet_analyzer import audio
 from birdnet_analyzer import model
+from birdnet_analyzer import config as cfg
 
 import warnings
 warnings.filterwarnings(action="ignore")
+
 
 class XenoCanto():
     
@@ -26,7 +28,6 @@ class XenoCanto():
     Xeno-Canto metadata is grouped and stored in a pandas Dataframe.
 
     Args:
-        load_audio (bool): If True, loads the data from Xeno-Canto and convert to embeddings. Default is True.
         params_xc (list): List of Xeno-Canto searching parameters to perform the query.
             The main searching parameters include:
             - grp : birds
@@ -45,6 +46,7 @@ class XenoCanto():
             If True, rows with incorrectly formatted date data are dropped. Default is False.
         verbose (bool, optional): If True, prints messages during the execution of the function. Default is True.
         save_path (str, optional): Path to the directory where the data will be saved. Default is None.
+        overwrite (bool, optional): If True, overwrites the existing directory. Default is True.
  
     Returns:
         pandas.DataFrame: Dataframe containing all the recordings metadata matching the Xeno-Canto searching parameters.
@@ -59,6 +61,7 @@ class XenoCanto():
                 format_date = False,
                 verbose = True,
                 save_path = 'train_data',
+                overwrite = True,
                 ):
 
         self.params_xc = params_xc
@@ -68,6 +71,7 @@ class XenoCanto():
         self.format_date = format_date 
         self.verbose = verbose
         self.save_path = save_path
+        self.overwrite = overwrite
 
         # Check whether root directory is existing or not
         if self.save_path is not None:   
@@ -159,6 +163,12 @@ class XenoCanto():
     
 
     def query(self):
+        """ 
+        Query Xeno-Canto database and build a dataset from the metadata.
+
+        Returns:        
+            pandas.DataFrame: Dataframe containing all the recordings metadata matching the Xeno-Canto searching parameters.
+        """
         
         # Create empty dataframe
         df = pd.DataFrame() 
@@ -277,16 +287,25 @@ class XenoCanto():
         return df
     
     
-    def load(self, dataset=None, data_labeling=True, csv_filename=None):
+    def labeling(self, dataset=None, cache_filename=None):
+        """ 
+        Label the Xeno-Canto dataset using density-based clustering.
+
+        Args:   
+            dataset (str or pd.DataFrame, optional): Path to the dataset CSV file or a pandas DataFrame. Default is None.
+            cache_filename (str, optional): Name of the cache file to save the labeled data. Default is None.
+                If None, the cache file will not be saved.            
+            
+        Returns:
+            x_train (np.ndarray): The training data embeddings.
+            y_train (np.ndarray): The training labels.
+        """
 
         if dataset is not None:
             self.df = pd.read_csv(dataset, sep=";")
 
-        x, y = [], []
-
         # Create a new dataframe for labeling
-        if data_labeling:
-            df_labeling = pd.DataFrame()
+        df_labeling = pd.DataFrame()
 
         unique_categories = self.df['categories'].unique()
         categories = list(sorted(unique_categories))
@@ -348,7 +367,7 @@ class XenoCanto():
                 tasks = []
 
                 for f in file_urls:
-                    task = p.apply_async(partial(self.load_audio_file, f=f, label_vector=label_vector, config=cfg.get_config()))
+                    task = p.apply_async(partial(self.load_xc_file, f=f, label_vector=label_vector, config=cfg.get_config()))
                     tasks.append(task)
 
                 # Wait for tasks to complete and monitor progress with tqdm
@@ -359,14 +378,9 @@ class XenoCanto():
 
                             # Check if the result is not empty
                             if len(result[0]) > 0:
-                                if data_labeling:
-                                    cat_embeddings += result[0]
-                                    timestamps += result[2]
-                                    file_paths += result[3]
-
-                                else:
-                                    x += result[0]
-                                    y += result[1]
+                                cat_embeddings += result[0]
+                                timestamps += result[2]
+                                file_paths += result[3]
 
                             # Update progress bar
                             progress_bar.update(1)
@@ -376,113 +390,104 @@ class XenoCanto():
 
                         # Check if the result is not empty
                         if len(result[0]) > 0:
-                            if data_labeling:
-                                cat_embeddings += result[0]
-                                timestamps += result[2]
-                                file_paths += result[3]
+                            cat_embeddings += result[0]
+                            timestamps += result[2]
+                            file_paths += result[3]
 
-                            else:
-                                x += result[0]
-                                y += result[1]
+            # Format timestamps and embeddings into new dataframe 
+            cols = ['start', 'end'] 
+            cols += ['emb' + str(idx).zfill(4) for idx in range(1, len(cat_embeddings[0]) + 1)] 
+            data = np.concatenate([np.asarray(timestamps), np.asarray(cat_embeddings)], axis=1)
 
-            if data_labeling:
-                from cluster import estimate_parameters
+            # Create a dataframe with the data
+            df_single_categories = pd.DataFrame(data=data, columns=cols)
+            df_single_categories['categories'] = cat
+            df_single_categories['file'] = file_paths
 
-                # Format timestamps and embeddings into new dataframe 
-                cols = ['start', 'end'] 
-                cols += ['emb' + str(idx).zfill(4) for idx in range(1, len(cat_embeddings[0]) + 1)] 
-                data = np.concatenate([np.asarray(timestamps), np.asarray(cat_embeddings)], axis=1)
-
-                # Create a dataframe with the data
-                df_single_categories = pd.DataFrame(data=data, columns=cols)
-                df_single_categories['categories'] = cat
-                df_single_categories['file'] = file_paths
-
-                # Find the cluster for each categories separately 
-                if len(df_single_categories) < 3: # test if the number of ROIs is higher than 2
-                    df_single_categories["cluster_number"] = -1 # noise
-                    df_single_categories["pseudo_label"] = 0 # noise
-                    
-                    if self.verbose:
-                        print("Only {} ROIs. It requires at least 3 ROIs to perform clustering".format(len(df_single_categories)))
-                        
-                else:
-                    config = cfg.get_config()
-
-                    # Prepare the embeddings of the categories
-                    X = df_single_categories.loc[:, df_single_categories.columns.str.startswith("emb")].to_numpy() 
-
-                    if self.verbose:
-                        print(f"Labeling '{cat}' species: {len(df_single_categories)} ROIs\n")
-
-                    if cfg.MIN_PTS == 'auto':
-                        # Automatic estimation of the clustering algorithm parameters
-                        min_samples = 3
-                        dbscan_parameters = []
-                        best_score = None
-                        
-                        # Multi-CPU processsing to estimate the parameters                  
-                        with Pool(cfg.CPU_THREADS - 1) as pool:
-                            while True:
-                                params = pool.apply(estimate_parameters, args=(X, config, min_samples, cfg.METRIC))
-                                if not np.isnan(params[0]):
-                                    dbscan_parameters.append(params)
-                                # Check if the current score is lower than the previous best score
-                                if best_score is not None and params[0] <= best_score[0]:
-                                    break
-                                # Update the best score
-                                best_score = params
-                                # Increment the number of components
-                                min_samples += 1
-                            
-                        # Use the best score found
-                        dbcv = best_score[0]
-                        cluster = best_score[1] 
-                        eps = best_score[2]
-                        min_samples = best_score[3]
-
-                    else:       
-                        if cfg.MIN_PTS > 1:
-                            min_samples = round(cfg.MIN_PTS)
-                        else:
-                            min_samples = 3 
-
-                        dbcv, cluster, eps, min_samples = estimate_parameters(X, config, min_samples, cfg.METRIC)
-
-                    if self.verbose:                
-                        # Get the predicted labels and the number of clusters (excluding noise)
-                        clusters = len(np.unique(cluster.labels_[cluster.labels_ >= 0])) 
-                        noisy_percentage = round(np.sum(cluster.labels_ == -1) / X.shape[0], 2) * 100           
-                        print(f'Number of clusters found (excluding noise): {clusters} (min_samples={min_samples}, eps={eps})')
-                        print(f'Percentage of noise/outliers data: {noisy_percentage}%')
-                        print(f'Density-Based Clustering Validation: {round(dbcv,4)}\n')
-
-                    # Add the label found with the clustering
-                    df_single_categories["cluster_number"] = cluster.labels_.reshape(-1, 1)
-            
-                    # Add the automatic label (SIGNAL = 1 or NOISE = 0) into the pseudo_label's column of the dataframe
-                    # Test if we want to consider only the biggest or all clusters that are not noise (-1) to be signal
-                    
-                    if cfg.KEEP == 'BIGGEST':
-                        # Set by default to 0 the pseudo_label of all
-                        df_single_categories.loc["pseudo_label"] = int(0)
-
-                        # Find the cluster ID of the biggest cluster that is not noise
-                        try:
-                            # Set to 1 the pseudo_label of the biggest cluster
-                            biggest_cluster_ID = df_single_categories.loc[df_single_categories["cluster_number"] >= 0]["cluster_number"].value_counts().idxmax()
-                            df_single_categories.loc[df_single_categories["cluster_number"] == biggest_cluster_ID, "pseudo_label"] = int(1)
-                        except:
-                            # If there is only noise
-                            pass
-                        
-                    elif cfg.KEEP == 'ALL':                
-                        # Set by to 0 the pseudo_label of the noise (cluster ID = -1)
-                        df_single_categories.loc[df_single_categories["cluster_number"] < 0, "pseudo_label"] = int(0)
-                        # Set by to 1 the pseudo_label of the signal (cluster ID >= 0)
-                        df_single_categories.loc[df_single_categories["cluster_number"] >= 0, "pseudo_label"] = int(1)
-
+            # Find the cluster for each categories separately 
+            if len(df_single_categories) < 3: # test if the number of ROIs is higher than 2
+                df_single_categories["cluster_number"] = -1 # noise
+                df_single_categories["pseudo_label"] = 0 # noise
                 
+                if self.verbose:
+                    print("Only {} ROIs. It requires at least 3 ROIs to perform clustering".format(len(df_single_categories)))
+                    
+            else:
+                config = cfg.get_config()
+
+                # Prepare the embeddings of the categories
+                X = df_single_categories.loc[:, df_single_categories.columns.str.startswith("emb")].to_numpy() 
+
+                if self.verbose:
+                    print(f"Labeling '{cat}' species with {cfg.METHOD}: {len(df_single_categories)} ROIs\n")
+
+                if cfg.MIN_PTS == 'auto':
+                    # Automatic estimation of the clustering algorithm parameters
+                    min_samples = 3
+                    dbscan_parameters = []
+                    best_score = None
+                    
+                    # Multi-CPU processsing to estimate the parameters                  
+                    with Pool(cfg.CPU_THREADS - 1) as pool:
+                        while True:
+                            params = pool.apply(estimate_parameters, args=(X, config, min_samples, cfg.METRIC))
+                            if not np.isnan(params[0]):
+                                dbscan_parameters.append(params)
+                            # Check if the current score is lower than the previous best score
+                            if best_score is not None and params[0] <= best_score[0]:
+                                break
+                            # Update the best score
+                            best_score = params
+                            # Increment the number of components
+                            min_samples += 1
+                        
+                    # Use the best score found
+                    dbcv = best_score[0]
+                    cluster = best_score[1] 
+                    eps = best_score[2]
+                    min_samples = best_score[3]
+
+                else:       
+                    if cfg.MIN_PTS > 1:
+                        min_samples = round(cfg.MIN_PTS)
+                    else:
+                        min_samples = 3 
+
+                    dbcv, cluster, eps, min_samples = estimate_parameters(X, config, min_samples, cfg.METRIC)
+
+                if self.verbose:                
+                    # Get the predicted labels and the number of clusters (excluding noise)
+                    clusters = len(np.unique(cluster.labels_[cluster.labels_ >= 0])) 
+                    noisy_percentage = round(np.sum(cluster.labels_ == -1) / X.shape[0], 2) * 100           
+                    print(f'Number of clusters found (excluding noise): {clusters} (min_samples={min_samples}, eps={eps})')
+                    print(f'Percentage of noise/outliers data: {noisy_percentage}%')
+                    print(f'Density-Based Clustering Validation: {round(dbcv,4)}\n')
+
+                # Add the label found with the clustering
+                df_single_categories["cluster_number"] = cluster.labels_.reshape(-1, 1)
+        
+                # Add the automatic label (SIGNAL = 1 or NOISE = 0) into the pseudo_label's column of the dataframe
+                # Test if we want to consider only the biggest or all clusters that are not noise (-1) to be signal
+                
+                if cfg.KEEP == 'BIGGEST':
+                    # Set by default to 0 the pseudo_label of all
+                    df_single_categories.loc["pseudo_label"] = int(0)
+
+                    # Find the cluster ID of the biggest cluster that is not noise
+                    try:
+                        # Set to 1 the pseudo_label of the biggest cluster
+                        biggest_cluster_ID = df_single_categories.loc[df_single_categories["cluster_number"] >= 0]["cluster_number"].value_counts().idxmax()
+                        df_single_categories.loc[df_single_categories["cluster_number"] == biggest_cluster_ID, "pseudo_label"] = int(1)
+                    except:
+                        # If there is only noise
+                        pass
+                    
+                elif cfg.KEEP == 'ALL':                
+                    # Set by to 0 the pseudo_label of the noise (cluster ID = -1)
+                    df_single_categories.loc[df_single_categories["cluster_number"] < 0, "pseudo_label"] = int(0)
+                    # Set by to 1 the pseudo_label of the signal (cluster ID >= 0)
+                    df_single_categories.loc[df_single_categories["cluster_number"] >= 0, "pseudo_label"] = int(1)
+
                 # Concatenate dataFrames
                 df_labeling = pd.concat([df_labeling, df_single_categories], ignore_index=True)
 
@@ -494,30 +499,133 @@ class XenoCanto():
         self.df.reset_index(drop=True, inplace=True)
 
         # Get the embeddings
-        x = self.df.loc[:, self.df.columns.str.startswith("emb")].to_numpy()
+        x_train = self.df.loc[:, self.df.columns.str.startswith("emb")].to_numpy()
         # Perform one-hot encoding on categories
         one_hot_encoded = pd.get_dummies(self.df.categories.astype(str))
-        y = one_hot_encoded.values
+        y_train = one_hot_encoded.values
 
-        if csv_filename is not None:            
-            if self.save_path is not None:
-                # Format save_path into Path
-                save_path = Path(self.save_path)
-                # Save and append dataframe 
-                csv_filename = save_path / csv_filename
-            # Save dataframe
-            self.df.to_csv(csv_filename, sep=";", encoding='utf-8', index=False, index_label='id')          
+        if cache_filename is not None:
+            # Format save_path into Path
+            save_path = Path(self.save_path)
+            # Save and append dataframe 
+            cache_filename = save_path / cache_filename
 
-        return np.array(x, dtype="float32"), np.array(y, dtype="float32")
+            if self.verbose:
+                print(f"Saving training data to cache: {cache_filename}", flush=True)
+
+            # Save cache file with training data, test data, labels and configuration
+            np.savez(
+                cache_filename,
+                x_train=np.array(x_train, dtype="float32"),
+                y_train=np.array(y_train, dtype="float32"),
+                labels=categories,
+                binary_classification=cfg.BINARY_CLASSIFICATION,
+                multi_label=cfg.MULTI_LABEL,
+                fmin=cfg.BANDPASS_FMIN,
+                fmax=cfg.BANDPASS_FMAX,
+                crop_mode=cfg.SAMPLE_CROP_MODE,
+                overlap=cfg.SIG_OVERLAP,
+            )
+
+        return np.array(x_train, dtype="float32"), np.array(y_train, dtype="float32")
+
+
+    def download(self, dataset=None, csv_filename=None):
+        """
+        Download audio files from Xeno-Canto.
+        
+        Args:
+            dataset (str or pd.DataFrame, optional): Path to the dataset CSV file or a pandas DataFrame. Default is None.
+            csv_filename (str, optional): The name of the csv file to save the ROIs. Default is None.
+        """ 
+            
+        if self.verbose:
+            print('\n====================== DOWNLOAD AUDIO FILES ======================\n')
+            
+        # Check if dataset is a path to a dataframe, audio file or folder
+        if type(dataset) == str:
+            ext = os.path.splitext(dataset)[1]
+            # Check file extension
+            if ext == ".csv": 
+                import pandas as pd
+                self.df = pd.read_csv(dataset, sep=";")        
+
+        # Create folders for each species if needed
+        if 'categories' in self.df.columns:
+            species_list = [s.replace(' ', '_') for s in self.df.categories.unique()]
+
+            # Create folders for each species
+            for species in species_list:
+                os.makedirs(os.path.join(self.save_path, species), exist_ok=True)
+
+        # Process rows in parallel
+        nb_cpu = os.cpu_count()
+        updated_file_paths = []
+        
+        with tqdm.tqdm(total=len(self.df), desc="Download audio files") as pbar:
+            with Pool(processes=nb_cpu - 1) as pool:
+                # Prepare arguments for starmap
+                rows = [row for _, row in self.df.iterrows()]
+                # Use partial to pass save_path if needed, or just row if not
+                for output_file in pool.imap(self.write_xc_file, rows):
+                    updated_file_paths.append(output_file)
+                    pbar.update(1)
+
+        if csv_filename is not None:
+            # Format save_path into Path
+            save_path = Path(self.save_path)
+            # Save and append dataframe 
+            csv_filename = save_path / csv_filename
+            
+            # Update the audio file paths of the dataframe 
+            self.df['file'] = updated_file_paths         
+            self.df.to_csv(csv_filename, index=False, sep=";")
+
+
+    def write_xc_file(self, row):
+        """
+        Write audio file from Xeno-Canto to the specified path.
+        Args:
+            row (pd.Series): A row from the DataFrame containing the audio file metadata.
+
+        Returns:
+            str: The path to the saved audio file.   
+        """
+        
+        import soundfile as sf
+        from urllib.parse import urlparse
+        
+        try:
+            # Check if the file is a URL or a local file
+            path = urlparse(row['file']).path
+            id_number = path.split('/')[1]
+
+            if 'start' in row:
+                sig, rate = self.open_xc_file(row['file'], cfg.SAMPLE_RATE, row.start, duration=row.end - row.start)
+                output_file = os.path.join(os.path.join(self.save_path, row['categories'].replace(' ', '_')), f"XC{int(id_number)}_{float(row['start'])}_{float(row['end'])}.wav")
+            else:
+                sig, rate = self.open_xc_file(row['file'], cfg.SAMPLE_RATE)
+                output_file = os.path.join(os.path.join(self.save_path, row['categories'].replace(' ', '_')), f"XC{int(id_number)}.wav")
+
+            sf.write(output_file, sig, rate)
+            
+            # Return updated file path
+            return output_file
+            
+        except Exception as ex:
+            print(f"Error: Cannot analyze audio file {row.file}.", flush=True)
+            from birdnet_analyzer import utils
+            utils.write_error_log(ex)
 
     
-    def load_audio_file(self, f, label_vector, config):
+    def load_xc_file(self, f, label_vector, config):
         """
-        Load an audio file and extract features.
+        Load an audio file from Xeno-Canto and extract features.
 
         Args:
             f: Path to the audio file.
             label_vector: The label vector for the file.
+            config: Configuration settings.
 
         Returns:
             A tuple of (x_train, y_train).
@@ -532,7 +640,7 @@ class XenoCanto():
         # Try to load the audio file
         try:
             # Load audio
-            sig, rate = self.open_audio_file(
+            sig, rate = self.open_xc_file(
                 f,
                 duration=cfg.SIG_LENGTH if cfg.SAMPLE_CROP_MODE == "first" else None,
                 fmin=cfg.BANDPASS_FMIN,
@@ -584,103 +692,17 @@ class XenoCanto():
         return x_train, y_train, timestamps, file_paths
 
 
-    def download(self, dataset=None, csv_filename=None):
-        """Download audio files from dataframe.
-        
-        Args:
-            dataset: Path to dataset. This could be a pd.Dataframe or the path to a pandas DataFrame or audio recordings folder.
-            save_path: Path to the directory where the whole dataset will be saved. 
-            verbose (bool, optional): If True, prints messages during the execution of the function. Default is True. 
-            csv_filename (str, optional): The name of the csv file to save the ROIs. Default is None.
-        """ 
-            
-        if self.verbose:
-            print('\n====================== DOWNLOAD AUDIO FILES ======================\n')
-            
-        # Check if dataset is a path to a dataframe, audio file or folder
-        if type(dataset) == str:
-            ext = os.path.splitext(dataset)[1]
-            # Check file extension
-            if ext == ".csv": 
-                import pandas as pd
-                self.df = pd.read_csv(dataset, sep=";")
-            # else:
-            #     from audio import saveAudioAsDataframe
-            #     # If it's not a csv file, we assume it's an audio file or a folder with audio files
-            #     self.df = saveAudioAsDataframe(dataset)         
-
-        # Create folders for each species if needed
-        if 'categories' in self.df.columns:
-            species_list = [s.replace(' ', '_') for s in self.df.categories.unique()]
-
-            # Create folders for each species
-            for species in species_list:
-                os.makedirs(os.path.join(self.save_path, species), exist_ok=True)
-
-        # Process rows in parallel
-        nb_cpu = os.cpu_count()
-        updated_file_paths = []
-        
-        with tqdm.tqdm(total=len(self.df), desc="Download audio files") as pbar:
-            with Pool(processes=nb_cpu - 1) as pool:
-                # Prepare arguments for starmap
-                rows = [row for _, row in self.df.iterrows()]
-                # Use partial to pass save_path if needed, or just row if not
-                for output_file in pool.imap(self.write_audio_file, rows):
-                    updated_file_paths.append(output_file)
-                    pbar.update(1)
-
-
-        if csv_filename is not None:
-            # Format save_path into Path
-            save_path = Path(self.save_path)
-            # Save and append dataframe 
-            csv_filename = save_path / csv_filename
-            
-            # Update the audio file paths of the dataframe 
-            self.df['file'] = updated_file_paths         
-            self.df.to_csv(csv_filename, index=False, sep=";")
-
-
-    def write_audio_file(self, row):
-        
-        import soundfile as sf
-        from urllib.parse import urlparse
-        
-        try:
-            # Check if the file is a URL or a local file
-            path = urlparse(row['file']).path
-            id_number = path.split('/')[1]
-
-            if 'start' in row:
-                sig, rate = self.open_audio_file(row['file'], cfg.SAMPLE_RATE, row.start, duration=row.end - row.start)
-                output_file = os.path.join(os.path.join(self.save_path, row['categories'].replace(' ', '_')), f"XC{int(id_number)}_{int(row['start'])}_{int(row['end'])}.wav")
-            else:
-                sig, rate = self.open_audio_file(row['file'], cfg.SAMPLE_RATE)
-                output_file = os.path.join(os.path.join(self.save_path, row['categories'].replace(' ', '_')), f"XC{int(id_number)}.wav")
-
-            sf.write(output_file, sig, rate)
-            
-            # Return updated file path
-            return output_file
-            
-        except Exception as ex:
-            print(f"Error: Cannot analyze audio file {row.file}.", flush=True)
-            from birdnet_analyzer import utils
-            utils.write_error_log(ex)
-
-
-    def open_audio_file(self, path: str, rate=cfg.SAMPLE_RATE, offset=0.0, duration=None, fmin=None, fmax=None):
+    def open_xc_file(self, path: str, rate=cfg.SAMPLE_RATE, offset=0.0, duration=None, fmin=None, fmax=None):
         """
-        Open an audio file.
-
-        Opens an audio file with FFmpeg and the given settings.
+        Open an audio file from Xeno-Canto with FFmpeg and the given settings.
 
         Args:
-            path: Path or URL to the audio file.
-            sample_rate: The sample rate at which the file should be processed.
-            offset: The starting offset.
-            duration: Maximum duration of the loaded content.
+            path (str): Path or URL to the audio file.
+            sample_rate (int): The sample rate at which the file should be processed.
+            offset (float): The starting offset.
+            duration (float): Maximum duration of the loaded content.
+            fmin (float): Minimum frequency for bandpass filtering.
+            fmax (float): Maximum frequency for bandpass filtering.
 
         Returns:
             Returns the audio time series and the sampling rate.
@@ -726,7 +748,15 @@ if __name__ == "__main__":
     
     # Query Xeno-Canto database and build dataset from metadata
     xc.data(csv_filename='xc_dataset.csv')
-    # Load training data with automatic data labeling
-    xc.load(data_labeling=True)
+    # Label training data and save to cache
+    xc.labeling(cache_filename="train_cache.npz")
+
     # Download audio files from the training dataset
     xc.download()
+
+
+
+
+    # from birdnet_analyzer.train import utils
+    # # x_train, y_train, x_test, y_test, valid_labels = utils._load_training_data(cache_mode="load", cache_file="train_data/train_data.npz", progress_callback=None)
+    # utils.train_model()

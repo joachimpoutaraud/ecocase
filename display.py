@@ -8,7 +8,7 @@ from bokeh.models import ColumnDataSource, HoverTool
 from bokeh.transform import factor_cmap
 from bokeh.palettes import Category20
 
-import config as cfg
+from birdnet_analyzer import config as cfg
 
 import warnings
 warnings.filterwarnings(action="ignore")
