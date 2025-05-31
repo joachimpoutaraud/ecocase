@@ -260,7 +260,7 @@ TRAIN_CACHE_MODE: str = "load"
 TRAIN_CACHE_FILE: str = "train_cache.npz"
 
 # Use automatic Hyperparameter tuning
-AUTOTUNE: bool = True
+AUTOTUNE: bool = False
 
 # How many trials are done for the hyperparameter tuning
 AUTOTUNE_TRIALS: int = 10

@@ -1,3 +1,7 @@
+import os
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+
 import numpy as np
 import pandas as pd
 import umap
@@ -10,8 +14,11 @@ from bokeh.palettes import Category20
 
 from birdnet_analyzer import config as cfg
 
+from dataset import XenoCanto
+
 import warnings
 warnings.filterwarnings(action="ignore")
+
 
 def create_thumbnails(row, save_path, encode=False):
     import librosa
@@ -20,10 +27,11 @@ def create_thumbnails(row, save_path, encode=False):
     from io import BytesIO
     import base64
     import soundfile as sf
-    import audio
     import os
-    
-    y, sr = audio.openAudioFile(row.file, sample_rate=16000, offset=row.start, duration=row.end - row.start)
+
+    xc = XenoCanto()
+    y, sr = xc.open(path=row.file, rate=16000, offset=row.start, duration=row.end - row.start, fmin=cfg.BANDPASS_FMIN, fmax=cfg.BANDPASS_FMAX)
+
     S = librosa.feature.melspectrogram(y=y, sr=sr)
     S_db = librosa.power_to_db(S, ref=np.max)
     plt.figure(figsize=(4, 2))
@@ -204,6 +212,6 @@ def interactive_display(df_cluster, X=None, output_filename='interactive_scatter
 
 if __name__ == "__main__":
     
-    df_cluster = pd.read_csv("cluster.csv", sep=";")
+    df_cluster = pd.read_csv("test_data/test_dataset.csv", sep=";")
     # Get interactive display of the clusters
-    interactive_display(df_cluster, thumbnails=True)
+    interactive_display(df_cluster, thumbnails=True, save_path='./test_data')
