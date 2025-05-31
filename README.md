@@ -12,15 +12,15 @@ You can install `ffmpeg` on your computer by following these [instructions](http
 ## Workflow
 
 ```python
-from dataset import XenoCanto
+from xcnet import XCNet
 
 # Create instance of XenoCanto class
-xc = XenoCanto()
+xcnet = XCNet()
 
 # Query Xeno-Canto database and build dataset from metadata
-xc.data(csv_filename='xc_dataset.csv')
+xcnet.data(csv_filename='xc_dataset.csv')
 # Label training data and save to cache
-xc.labeling(cache_filename="train_cache.npz")
+xcnet.labeling(cache_filename="train_cache.npz")
 # Download audio files from the training dataset
-xc.download()
+xcnet.download()
 ```
