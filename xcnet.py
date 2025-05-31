@@ -133,12 +133,16 @@ class XCNet(XenoCanto):
                     # Create dataframe for training dataset
                     self.df = pd.DataFrame({'file': files, 'categories': categories})
 
-            else:
+            elif isinstance(dataset, str) and dataset.lower().endswith('.csv') and os.path.isfile(dataset):
                 self.df = pd.read_csv(dataset, sep=";")
+            else:
+                raise ValueError("Provided dataset path is not a directory or a valid CSV file.")
         else:
-            # Get the dataset using the Xeno-Canto parent class
-            self.df = self.data(csv_filename=csv_filename)
+            # If self.df is already a DataFrame, do nothing; otherwise, get the dataset using the Xeno-Canto parent class
+            if not isinstance(getattr(self, 'df', None), pd.DataFrame):
+                self.df = self.data(csv_filename=csv_filename)
 
+        # Get unique categories from the dataframe
         unique_categories = self.df['categories'].unique()
         categories = list(sorted(unique_categories))
 
@@ -398,18 +402,18 @@ class XCNet(XenoCanto):
 
 if __name__ == "__main__":
 
-    # # Create an instance of the XCNet class
-    # xcnet = XCNet(save_path='train_data')
+    # Create an instance of the XCNet class
+    xcnet = XCNet(save_path='train_data')
     
-    # # Build dataset from Xeno-Canto and save to csv
-    # xcnet.data(csv_filename='xc_dataset.csv')
-    # # Label data with clustering and save to cache
-    # xcnet.labeling(cache_filename="train_cache.npz")
+    # Build dataset from Xeno-Canto and save to csv
+    xcnet.data(csv_filename='xc_dataset.csv')
+    # Label data with clustering and save to cache
+    xcnet.labeling(cache_filename="train_cache.npz")
 
     # # Download audio files from the training dataset
     # xcnet.download()
 
     # xcnet.train(custom_classifier='xcnet.tflite', cache_mode="load", cache_file="train_cache.npz")
 
-    xcnet = XCNet(save_path='test_data', overwrite=False)
-    x, y = xcnet.labeling(dataset='test_data', custom_classifier='train_data/xcnet.tflite')
+    # xcnet = XCNet(save_path='test_data', overwrite=False)
+    # x, y = xcnet.labeling(dataset='test_data', custom_classifier='train_data/xcnet.tflite')
