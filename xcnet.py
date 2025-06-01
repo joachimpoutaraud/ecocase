@@ -90,7 +90,7 @@ class XCNet(XenoCanto):
             print(f"\nSaving custom classifier: {save_model}", flush=True)
 
 
-    def labeling(self, dataset=None, method='clustering', keep='biggest', csv_filename=None, save_cache=None):
+    def labeling(self, dataset=None, method='clustering', keep=cfg.KEEP, csv_filename=None, save_cache=None):
         """ 
         Data-labeling using clustering or classification. By default, it uses clustering to label the data.
 
@@ -100,7 +100,7 @@ class XCNet(XenoCanto):
             method (str, optional): Method to use for labeling. It can be 'clustering' or 'classification'. Default is 'clustering'.
                 If 'clustering', the data will be labeled using density-based clustering (DBSCAN or HDBSCAN).
                 If 'classification', the data will be labeled using predictions of a classifier (e.g. BirdNet or custom classifier).
-            keep (str, optional): If 'biggest', only the biggest cluster will be kept as signal. If 'all', all clusters will be kept as signal. Default is 'biggest'.
+            keep (str, optional): If 'biggest', only the biggest cluster will be kept as signal. If 'all', all clusters will be kept as signal. Default is 'BIGGEST'.
                 This parameter is only used if method is set to 'clustering'.
             csv_filename (str, optional): Name of the CSV file to save the labeled data. Default is None.
                 If None, the labeled data will not be saved to a CSV file.
@@ -264,6 +264,10 @@ class XCNet(XenoCanto):
 
         # Keep only categories of interest
         self.df = df_labeling[df_labeling.categories.isin(unique_categories)]
+        # If there is only one category we analyze the repertoire of the species
+        if keep.upper() == 'ALL' and len(categories) == 1:
+            # Add the cluster number to the categories to differentiate them
+            self.df.categories = self.df.apply(lambda row: f"{row['categories']}_{row['prediction']}", axis=1) 
         # Rearrange index to be sure to have unique and increasing index
         self.df.reset_index(drop=True, inplace=True)
 
@@ -488,11 +492,8 @@ if __name__ == "__main__":
 
 
 
-    ##################################################################################################################
+    ###########################################################################################
     # TODO LIST
-    # 1) Add custom classifier object to XCNet class and update labeling function to use it
-    # The goal is to be able to label data with embeddings and clustering or model predictions
-    # By using either classification (BirdNet or custom classifier) or density-based clustering (DBSCAN, HDBSCAN)
-
-    # 2) Update open function to filter and split audio files using FFmpeg
-    ##################################################################################################################
+    # 1) Whether to include the data labeled as noise as a category when training the model?
+    # 2) Update open function to bandpass filter and split audio files using FFmpeg
+    ###########################################################################################
