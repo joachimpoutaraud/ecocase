@@ -61,7 +61,7 @@ AUDIO_SPEED: float = 1.0
 #########################
 
 # Number of audio files to download for each species
-NUM_FILES: int = 10  
+NUM_FILES: int = 100  
 
 # Xeno-Canto scientific species (e.g. ['Columba palumbus','Fringilla coelebs']) 
 # If None, species will be requested according to the Xeno-Canto searching parameters
@@ -116,9 +116,9 @@ PARAMS_XC: list[str] = [
     # Radius search easily made using bboxfinder.com (coordinate format:"Lat / Lng" + draw a circle with radius ~ 500km, and copy map)
 ] 
 
-############################
-#  Data-labeling settings  #
-############################
+#########################
+#  Clustering settings  #
+#########################
 
 MIN_PTS = 'auto'                      # Number of samples in a neighborhood for a point to be considered as a core point {int or 'auto'}
 EPS = 'auto'                          # Maximum distance between two samples for one to be considered as in the neighborhood of the other {float or 'auto'}
@@ -216,7 +216,7 @@ UPSAMPLING_RATIO: float = 0.0
 UPSAMPLING_MODE = "repeat"
 
 # Number of epochs to train for
-TRAIN_EPOCHS: int = 50
+TRAIN_EPOCHS: int = 150
 
 # Batch size for training
 TRAIN_BATCH_SIZE: int = 32
@@ -260,7 +260,7 @@ TRAIN_CACHE_MODE: str = "load"
 TRAIN_CACHE_FILE: str = "train_cache.npz"
 
 # Use automatic Hyperparameter tuning
-AUTOTUNE: bool = False
+AUTOTUNE: bool = True
 
 # How many trials are done for the hyperparameter tuning
 AUTOTUNE_TRIALS: int = 10

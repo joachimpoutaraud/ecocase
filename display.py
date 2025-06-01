@@ -55,65 +55,49 @@ def create_thumbnails(row, save_path, encode=False):
         return f'data:image/png;base64,{img_str}', f'data:audio/wav;base64,{audio_str}'
     
     else:           
-        # Ensure save_path is not None
         if save_path is None:
-            raise ValueError("save_path cannot be None when encode is False")
+            save_path = os.getcwd()
         
         save_path = os.path.join(save_path, 'thumbnails')
         # Check if the folder exists, and create it if it doesn't
         if not os.path.exists(save_path):
             os.makedirs(save_path) 
 
+        filename = os.path.splitext(os.path.basename(row.file))[0]
+
         # Save image to disk
-        img_filename = f"{os.path.join(save_path, str(row.categories) + str(row.start))}.png"
-        plt.savefig(img_filename, format='png', bbox_inches='tight', pad_inches=0)
+        img_filename = f"{str(filename)}_{str(row.start)}_{str(row.end)}.png"
+        plt.savefig(os.path.join(save_path, img_filename), format='png', bbox_inches='tight', pad_inches=0)
         plt.close()
 
         # Save audio to disk
-        audio_filename = f"{os.path.join(save_path, str(row.categories) + str(row.start))}.wav"
-        sf.write(audio_filename, y, sr, format='wav')
+        audio_filename = f"{str(filename)}_{str(row.start)}_{str(row.end)}.wav"
+        sf.write(os.path.join(save_path, audio_filename), y, sr, format='wav')
 
-        return f"{os.path.join(save_path, str(row.categories) + str(row.start))}.png", f"{os.path.join(save_path, str(row.categories) + str(row.start))}.wav"
+        # Only return file paths from thumbnails folder for writing html file
+        return os.path.join('thumbnails', img_filename), os.path.join('thumbnails', audio_filename)
 
 
-def interactive_display(df_cluster, X=None, output_filename='interactive_scatter', save_path=None, thumbnails=True, encode=False, noise=False, frame_width=1000, frame_height=600, point_size=5):  
-    
-    # Check if dataset is a path to a dataframe, audio file or folder
-    if type(df_cluster) == str:
-        import os
-        ext = os.path.splitext(df_cluster)[1]
-        # Check file extension
-        if ext == ".csv": 
-            df_cluster = pd.read_csv(df_cluster, sep=";")
+def interactive_display(df, thumbnails=True, encode=False, frame_width=1000, frame_height=600, point_size=5, html_filename='scatterplot.html', save_path=None):  
+        
+    if 'confidence' in df.columns:
+        # Filter dataframe according to minimum confidence
+        noise_mask = df['confidence'] > cfg.MIN_CONFIDENCE
+        df = df[noise_mask]
 
-    if X is None:
-        # Prepare the embeddings    
-        X = df_cluster.loc[:, df_cluster.columns.str.startswith("emb")].to_numpy()
-
+    # Get the embeddings    
+    X = df.loc[:, df.columns.str.startswith("emb")].to_numpy()
     # Remove potential NaN values from the dataset
     X = np.nan_to_num(X)
-        
-    if not noise:
-        # Keep only data pseudo-labeled as signal 
-        if 'confidence' in df_cluster.columns:
-            noise_mask = df_cluster['confidence'] > cfg.MIN_CONFIDENCE
-        else:
-            noise_mask = df_cluster['pseudo_label'] == 1
 
-        df_cluster = df_cluster[noise_mask]
-        X = X[noise_mask]
-
-    # Get all the cluster labels and filenames
-    if 'prediction' in df_cluster.columns:
-        species = df_cluster['prediction']   
-        labels = pd.factorize(species)[0] # Convert string labels to integer codes using pandas
-    else:
-        labels = df_cluster['cluster_number']
+    # Get the labels
+    labels = df['prediction']
 
     if X.shape[1] > 2:
         # Fit the UMAP model and transform the data
         reducer = umap.UMAP(n_components=2, metric=cfg.METRIC, random_state=cfg.RANDOM_SEED)
-        X = reducer.fit_transform(X, y=labels)
+        y = pd.factorize(labels)[0] # Convert labels to numeric values
+        X = reducer.fit_transform(X, y=y)
 
     # Get the unique cluster labels and try to get optimal color number
     unique_clusters = np.unique(labels).astype(str).tolist()
@@ -138,9 +122,9 @@ def interactive_display(df_cluster, X=None, output_filename='interactive_scatter
         nb_cpu = os.cpu_count() 
         spectrograms, audio_files = [], []
 
-        with tqdm(total=len(df_cluster), desc="Process image and audio thumbnails") as pbar: 
+        with tqdm(total=len(df), desc="Process image and audio thumbnails") as pbar: 
             with ProcessPoolExecutor(max_workers=nb_cpu-1) as executor:
-                futures = [executor.submit(create_thumbnails, row, save_path, encode) for _, row in df_cluster.iterrows()]
+                futures = [executor.submit(create_thumbnails, row, save_path, encode) for _, row in df.iterrows()]
             
                 for future in futures:
                     pbar.update(1)
@@ -156,7 +140,7 @@ def interactive_display(df_cluster, X=None, output_filename='interactive_scatter
                  label=labels.astype(str).tolist(), 
                  spectrogram=spectrograms, 
                  audio=audio_files, 
-                 filename=df_cluster['file'].astype(str).tolist())
+                 filename=audio_files)
 
         tooltips = """
             <div>
@@ -167,15 +151,15 @@ def interactive_display(df_cluster, X=None, output_filename='interactive_scatter
             <div style="font-size: 12px; color: #966;">Label: @label</div>
         """
 
-        if set(['lat', 'lng']).issubset(df_cluster.columns):
-            data_dict.update(lat=df_cluster['lat'].astype(str).tolist(), 
-                     lng=df_cluster['lng'].astype(str).tolist())
-            tooltips += """
-            <div style="font-size: 12px; color: #966;">Latitude: @lat</div>
-            <div style="font-size: 12px; color: #966;">Longitude: @lng</div>
-            """
-        elif 'confidence' in df_cluster.columns:
-            data_dict.update(confidence=df_cluster['confidence'].to_numpy())
+        # if set(['lat', 'lng']).issubset(df.columns):
+        #     data_dict.update(lat=df['lat'].astype(str).tolist(), 
+        #              lng=df['lng'].astype(str).tolist())
+        #     tooltips += """
+        #     <div style="font-size: 12px; color: #966;">Latitude: @lat</div>
+        #     <div style="font-size: 12px; color: #966;">Longitude: @lng</div>
+        #     """
+        if 'confidence' in df.columns:
+            data_dict.update(confidence=df['confidence'].to_numpy())
             tooltips += """
             <div style="font-size: 12px; color: #966;">Confidence: @confidence</div>
             """
@@ -195,7 +179,7 @@ def interactive_display(df_cluster, X=None, output_filename='interactive_scatter
         hover = HoverTool(tooltips=tooltips)
 
         p = figure(frame_width=frame_width, frame_height=frame_height, title=f"{cfg.METHOD} interactive scatter plot with spectrograms and audio", tools="pan,wheel_zoom,reset")
-        if 'confidence' in df_cluster.columns and 'confidence' in source.data:
+        if 'confidence' in df.columns and 'confidence' in source.data:
             p.scatter('x', 'y', size=point_size, color=mapper, fill_alpha='confidence', source=source)
         else:
             p.scatter('x', 'y', size=point_size, color=mapper, source=source)
@@ -206,12 +190,5 @@ def interactive_display(df_cluster, X=None, output_filename='interactive_scatter
         p = figure(frame_width=frame_width, frame_height=frame_height, title=f"{cfg.METHOD} interactive scatter plot", tools="pan,wheel_zoom,reset")
         p.scatter('x', 'y', size=point_size, color=mapper, source=source)
         
-    output_file(f"{output_filename}.html")
+    output_file(os.path.join(save_path, html_filename))
     show(p)
-
-
-if __name__ == "__main__":
-    
-    df_cluster = pd.read_csv("test_data/test_dataset.csv", sep=";")
-    # Get interactive display of the clusters
-    interactive_display(df_cluster, thumbnails=True, save_path='./test_data')

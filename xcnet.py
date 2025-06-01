@@ -13,13 +13,13 @@ from birdnet_analyzer import audio
 from birdnet_analyzer import model
 
 from dataset import XenoCanto
-from clustering import cluster
 
 
 class XCNet(XenoCanto):
 
     def __init__(
                 self,
+                custom_classifier = cfg.CUSTOM_CLASSIFIER,
                 params_xc = cfg.PARAMS_XC,
                 species_xc = cfg.SPECIES_XC,
                 num_files = cfg.NUM_FILES,
@@ -30,6 +30,7 @@ class XCNet(XenoCanto):
                 overwrite = False,
                 ):
 
+        self.custom_classifier = custom_classifier
         self.params_xc = params_xc
         self.species_xc = species_xc
         self.num_files = num_files
@@ -38,6 +39,11 @@ class XCNet(XenoCanto):
         self.verbose = verbose
         self.save_path = save_path
         self.overwrite = overwrite
+
+        if self.custom_classifier is not None:
+            config = cfg.get_config()
+            config['CUSTOM_CLASSIFIER'] = self.custom_classifier
+            cfg.set_config(config)
 
         # Check whether root directory is existing or not
         if self.save_path is not None:   
@@ -51,53 +57,58 @@ class XCNet(XenoCanto):
                 os.makedirs(self.save_path)  
 
 
-    def train(self, custom_classifier=cfg.CUSTOM_CLASSIFIER, cache_mode="load", cache_file="", on_epoch_end=None, on_trial_result=None, on_data_load_end=None, autotune_directory="autotune"):
+    def train(self, load_cache=cfg.TRAIN_CACHE_FILE, on_epoch_end=None, on_trial_result=None, on_data_load_end=None, autotune_directory="autotune", save_model=cfg.CUSTOM_CLASSIFIER):
 
         from birdnet_analyzer.train import utils
         
         config = cfg.get_config()
 
-        # Set the configuration parameters
         if self.save_path is not None:
             # Format save_path into Path
             save_path = Path(self.save_path)
-            custom_classifier = str(save_path / custom_classifier)
+            # Save and append directory to model and cache file
+            save_model = str(save_path / os.path.basename(save_model))
+            load_cache = str(save_path / os.path.basename(load_cache))
 
-            # Save and append directory
-            config['CUSTOM_CLASSIFIER'] = custom_classifier
-            config['TRAIN_CACHE_FILE'] = str(save_path / cache_file)
+            config['CUSTOM_CLASSIFIER'] = save_model
+            config['TRAIN_CACHE_FILE'] = load_cache
         else:
-            config['CUSTOM_CLASSIFIER'] = custom_classifier
-            config['TRAIN_CACHE_FILE'] = cache_file
+            # If save_path is None, use the default paths
+            config['CUSTOM_CLASSIFIER'] = save_model
+            config['TRAIN_CACHE_FILE'] = load_cache
 
-        config['TRAIN_CACHE_MODE'] = cache_mode
-
+        if load_cache is not None:
+            config['TRAIN_CACHE_MODE'] = "load"
+        
+        # Set the configuration parameters
         cfg.set_config(config)
 
         # Train the model
         utils.train_model(on_epoch_end=on_epoch_end, on_trial_result=on_trial_result, on_data_load_end=on_data_load_end, autotune_directory=autotune_directory)
 
         if self.verbose:
-            print(f"\nSaving custom classifier: {custom_classifier}", flush=True)
+            print(f"\nSaving custom classifier: {save_model}", flush=True)
 
 
-    def labeling(self, dataset=None, custom_classifier=cfg.CUSTOM_CLASSIFIER, csv_filename=None, cache_filename=None):
+    def labeling(self, dataset=None, method='clustering', keep='biggest', csv_filename=None, save_cache=None):
         """ 
         Data-labeling using clustering or classification. By default, it uses clustering to label the data.
-        If a custom classifier is provided, it will use the classifier to predict the labels of the data.
 
         Args:   
             dataset (str or pd.DataFrame, optional): Path to the dataset. It can be a CSV file or a folder path containing audio files. Default is None.
                 If None, the dataset is queried from Xeno-Canto according to the Xeno-Canto parameters in the configuration file.
-            custom_classifier (str, optional): Path to the custom classifier file. Default is None.
+            method (str, optional): Method to use for labeling. It can be 'clustering' or 'classification'. Default is 'clustering'.
+                If 'clustering', the data will be labeled using density-based clustering (DBSCAN or HDBSCAN).
+                If 'classification', the data will be labeled using predictions of a classifier (e.g. BirdNet or custom classifier).
+            keep (str, optional): If 'biggest', only the biggest cluster will be kept as signal. If 'all', all clusters will be kept as signal. Default is 'biggest'.
+                This parameter is only used if method is set to 'clustering'.
             csv_filename (str, optional): Name of the CSV file to save the labeled data. Default is None.
                 If None, the labeled data will not be saved to a CSV file.
-            cache_filename (str, optional): Name of the cache file to save the labeled data. Default is None.
+            save_cache (str, optional): Name of the cache file to save the labeled data. Default is None.
                 If None, the cache file will not be saved.            
             
         Returns:
-            x_train (np.ndarray): The training data embeddings.
-            y_train (np.ndarray): The training labels.
+            pd.DataFrame: DataFrame containing the labeled data with embeddings and labels.
         """
 
         if dataset is not None:
@@ -145,7 +156,6 @@ class XCNet(XenoCanto):
         # Get unique categories from the dataframe
         unique_categories = self.df['categories'].unique()
         categories = list(sorted(unique_categories))
-
         # Get valid labels
         valid_labels = [label for label in categories if label.lower() not in cfg.NON_EVENT_CLASSES and not label.startswith("-")]
 
@@ -180,20 +190,13 @@ class XCNet(XenoCanto):
                     "Only repeat-upsampling ist available for multi-label", "validation-only-repeat-upsampling-for-multi-label"
                 )
 
-        # Get configuration 
-        config = cfg.get_config()
         # Create a new dataframe for labeling
         df_labeling = pd.DataFrame()
+        # Get configuration parameters
+        config = cfg.get_config()
 
-        # Use custom classifier to label data
-        if custom_classifier is not None:
-            config['CUSTOM_CLASSIFIER'] = custom_classifier
-            # Get the labels of the custom classifier
-            filename, _ = os.path.splitext(custom_classifier)
-            config['LABELS_FILE'] = filename + "_Labels.txt"
-            labels = Path(config['LABELS_FILE']).read_text(encoding="utf-8").splitlines() if config['LABELS_FILE'] else []
-            config['LABELS'] = labels
-
+        count = 1
+        # Iterate over the categories
         for cat in categories:
             # Get list of files
             files = self.df[self.df['categories'] == cat]['file'].tolist()
@@ -204,21 +207,23 @@ class XCNet(XenoCanto):
             with Pool(cfg.CPU_THREADS) as p:
                 tasks = []
 
-                # Load and split the audio files
+                # Load and split the audio files to extract features and/or make predictions
                 for f in files:
-                    task = p.apply_async(partial(self.load_and_split, f=f, config=config))
+                    if method == 'clustering':
+                        task = p.apply_async(partial(self.split_and_extract, f=f, config=config))
+                    else:
+                        task = p.apply_async(partial(self.split_and_extract, f=f, config=config, predict=True))
                     tasks.append(task)
 
                 # Wait for tasks to complete and monitor progress with tqdm
                 with tqdm.tqdm(
                     total=len(tasks),
-                    desc=f"Loading '{cat}' species" if self.verbose else None,
+                    desc=f"Loading '{cat}' species ({str(count)}/{str(len(categories))})" if self.verbose else None,
                     unit="f"
                 ) as progress_bar:
                     # Iterate over the tasks and get the results
                     for task in tasks:
                         result = task.get()
-
                         # Check if the result is not empty
                         if len(result[0]) > 0:
                             df_batch = pd.DataFrame()
@@ -233,7 +238,7 @@ class XCNet(XenoCanto):
                             df_batch['end'] = [t[1] for t in result[1]]
                             df_batch['file'] = result[2]
 
-                            if custom_classifier is not None:
+                            if method != 'clustering':
                                 # Add predictions and confidences to the dataframe
                                 df_batch['prediction'] = result[3]
                                 df_batch['confidence'] = result[4]
@@ -244,30 +249,33 @@ class XCNet(XenoCanto):
                         # Update progress bar
                         progress_bar.update(1)
 
-                    if custom_classifier is None:
-                        # Label the data using density-based clustering if no custom classifier is provided
-                        df_labels = cluster(df_labels, config, self.verbose)
-                        # Keep only data pseudo-labeled as signal
-                        df_labels = df_labels[df_labels.pseudo_label == 1]
+            # Label data using density-based clustering if no custom classifier is provided
+            if method == 'clustering':
+                from clustering import cluster
+                config['KEEP'] = keep.upper()
+                df_labels = cluster(df_labels, config, self.verbose)
+                # Keep only data labeled as signal (i.e. not noise)
+                df_labels = df_labels[df_labels['pseudo_label'] == 1]
 
-                # Concatenate dataFrames
-                df_labeling = pd.concat([df_labeling, df_labels], ignore_index=True)
+            # Concatenate dataFrames
+            df_labeling = pd.concat([df_labeling, df_labels], ignore_index=True)
+
+            count += 1
 
         # Keep only categories of interest
         self.df = df_labeling[df_labeling.categories.isin(unique_categories)]
         # Rearrange index to be sure to have unique and increasing index
         self.df.reset_index(drop=True, inplace=True)
 
-        # Get the embeddings
-        x_train = self.df.loc[:, self.df.columns.str.startswith("emb")].to_numpy()
-        if custom_classifier is not None:
-            # Perform one-hot encoding the predictions of the custom classifier
-            one_hot_encoded = pd.get_dummies(self.df.prediction.astype(str))
+        # Add embeddings and labels to the class instance
+        self.embeddings = self.df.loc[:, self.df.columns.str.startswith("emb")].to_numpy()
+        
+        if method == 'clustering':
+            # If clustering, use categories as labels
+            self.labels = self.df.categories.astype(str)
         else:
-            # Perform one-hot encoding on categories
-            one_hot_encoded = pd.get_dummies(self.df.categories.astype(str))
-        # Get the labels
-        y_train = one_hot_encoded.values
+            # If classification, use predictions as labels
+            self.labels = self.df.prediction.astype(str)
 
         if csv_filename is not None:            
             if self.save_path is not None:
@@ -277,26 +285,33 @@ class XCNet(XenoCanto):
                 csv_filename = save_path / csv_filename
 
             if self.verbose:
-                print(f"Saving training data to csv: {csv_filename}", flush=True)
+                print(f"Saving labeled data to csv: {csv_filename}", flush=True)
 
             # Save dataframe
             self.df.to_csv(csv_filename, sep=";", encoding='utf-8', index=False, index_label='id') 
 
-        if cache_filename is not None:
+        if save_cache is not None:
             if self.save_path is not None:
                 # Format save_path into Path
                 save_path = Path(self.save_path)
                 # Save and append dataframe 
-                cache_filename = save_path / cache_filename
+                save_cache = save_path / save_cache
+
+            # Set cache filename
+            config = cfg.get_config()
+            config['TRAIN_CACHE_FILE'] = save_cache
+            config = cfg.set_config(config)
 
             if self.verbose:
-                print(f"Saving training data to cache: {cache_filename}", flush=True)
+                print(f"Saving training data to cache: {cfg.TRAIN_CACHE_FILE}", flush=True)
 
-            # Save cache file with training data, test data, labels and configuration
+            # Encode labels according to birdnet_analyzer format
+            one_hot_encoded = pd.get_dummies(self.labels)
+
             np.savez(
-                cache_filename,
-                x_train=np.array(x_train, dtype="float32"),
-                y_train=np.array(y_train, dtype="float32"),
+                save_cache,
+                x_train=np.array(self.embeddings, dtype="float32"),
+                y_train=np.array(one_hot_encoded.values, dtype="float32"),
                 labels=categories,
                 binary_classification=cfg.BINARY_CLASSIFICATION,
                 multi_label=cfg.MULTI_LABEL,
@@ -306,16 +321,18 @@ class XCNet(XenoCanto):
                 overlap=cfg.SIG_OVERLAP,
             )
 
-        return np.array(x_train, dtype="float32"), np.array(y_train, dtype="float32")
+        return self.df
     
-    
-    def load_and_split(self, f, config):
+
+    def split_and_extract(self, f, config, predict=False):
         """
-        Load and split audio files to extract features and/or make predictions.
+        This function opens an audio file, splits it into segments, and extracts feature embeddings.
+        It also predicts labels if a custom classifier is provided.
 
         Args:
             f: Path to the audio file.
             config: Configuration settings.
+            predict: Boolean indicating whether to predict labels using a custom classifier. Default is False.
 
         Returns:
             embeddings: List of feature embeddings extracted from the audio file.
@@ -370,7 +387,6 @@ class XCNet(XenoCanto):
         batch_size = 1  # turns out that batch size 1 is the fastest, probably because of having to resize the model input when the number of samples in a batch changes
 
         for i in range(0, len(sig_splits), batch_size):
-
             # Get timestamps and file paths
             timestamps.append([start, end])
             file_paths.append(f)
@@ -384,36 +400,99 @@ class XCNet(XenoCanto):
             # Add to training data
             embeddings.extend(e)
 
-            if cfg.CUSTOM_CLASSIFIER is not None:
+            if predict:
                 import operator
+
                 # Predict labels
                 p = model.predict(batch_sig)[0]
+                # Logits or sigmoid activations?
+                if cfg.APPLY_SIGMOID:
+                    p = model.flat_sigmoid(np.array(p), sensitivity=-cfg.SIGMOID_SENSITIVITY)
+
+                # Get the labels file
+                if self.custom_classifier is not None:
+                    # Get the labels of the custom classifier
+                    filename = os.path.splitext(self.custom_classifier)[0]
+                    # Here we assume that the labels file is in the same directory as the custom classifier
+                    cfg.LABELS_FILE = filename + "_Labels.txt" 
+
                 # Assign scores to labels
-                p_labels = zip(cfg.LABELS, p)
+                labels = Path(cfg.LABELS_FILE).read_text(encoding="utf-8").splitlines() if cfg.LABELS_FILE else []
+                p_labels = zip(labels, p)
                 # Sort by score
                 p_sorted = sorted(p_labels, key=operator.itemgetter(1), reverse=True)
                 # Add top prediction and confidence to lists
                 predictions.append(p_sorted[0][0])  # Species name
                 confidences.append(p_sorted[0][1])  # Confidence score
 
-        return (embeddings, timestamps, file_paths, predictions, confidences) if cfg.CUSTOM_CLASSIFIER is not None else (embeddings, timestamps, file_paths)
+        return (embeddings, timestamps, file_paths, predictions, confidences) if predict else (embeddings, timestamps, file_paths)
+    
+    
+    def plot(self, dataset=None, min_confidence=cfg.MIN_CONFIDENCE, thumbnails=True, encode=False, frame_width=1000, frame_height=600, point_size=5, html_filename='scatterplot.html'):
+        """
+        Display the audio file and its spectrogram.
+
+        Args:
 
 
+        Returns:
+            tuple: Paths to the saved spectrogram and audio files.
+        """
+        
+        from display import interactive_display
+
+        # Check if dataset is a path to a dataframe
+        if dataset is not None:
+            ext = os.path.splitext(dataset)[1]
+            # Check file extension
+            if ext == ".csv": 
+                self.df = pd.read_csv(dataset, sep=";")
+            else:
+                raise ValueError("Provided dataset path is not a valid CSV file.")
+
+        config = cfg.get_config()
+        config['MIN_CONFIDENCE'] = min_confidence
+        cfg.set_config(config)
+
+        interactive_display(
+            self.df, 
+            thumbnails=thumbnails, 
+            encode=encode, 
+            frame_width=frame_width, 
+            frame_height=frame_height, 
+            point_size=point_size, 
+            html_filename=html_filename, 
+            save_path=self.save_path
+            )
+        
 
 if __name__ == "__main__":
 
-    # Create an instance of the XCNet class
-    xcnet = XCNet(save_path='train_data')
+    # # Create an instance of the XCNet class
+    # xcnet = XCNet(save_path='train_data')
     
-    # Build dataset from Xeno-Canto and save to csv
-    xcnet.data(csv_filename='xc_dataset.csv')
-    # Label data with clustering and save to cache
-    xcnet.labeling(cache_filename="train_cache.npz")
+    # # # Build dataset from Xeno-Canto and save to csv
+    # # xcnet.data(csv_filename='xc_dataset.csv')
+    # # # Label data with clustering and save to cache
+    # # xcnet.labeling(method='clustering', save_cache="train_cache.npz")
+    # # Train model with pseudo-labeled dataset and save
+    # xcnet.train(load_cache='train_data/train_cache.npz', save_model='xcnet.tflite')
 
-    # # Download audio files from the training dataset
-    # xcnet.download()
+    # Label unlabeled dataset with custom classifier and plot the results
+    xcnet = XCNet(save_path='test_data')
+    xcnet.labeling(dataset='test_data', method='classification', csv_filename='labels.csv')
+    # xcnet.labeling(dataset='test_data', method='clustering', keep='all', csv_filename='labels.csv')
+    xcnet.plot()
 
-    # xcnet.train(custom_classifier='xcnet.tflite', cache_mode="load", cache_file="train_cache.npz")
 
-    # xcnet = XCNet(save_path='test_data', overwrite=False)
-    # x, y = xcnet.labeling(dataset='test_data', custom_classifier='train_data/xcnet.tflite')
+
+
+
+    ##################################################################################################################
+    # TODO LIST
+    # 1) Add custom classifier object to XCNet class and update labeling function to use it
+    # The goal is to be able to label data with embeddings and clustering or model predictions
+    # By using either classification (BirdNet or custom classifier) or density-based clustering (DBSCAN, HDBSCAN)
+
+    # 2) Update open function to filter and split audio files using FFmpeg
+    ##################################################################################################################

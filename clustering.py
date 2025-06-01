@@ -25,14 +25,14 @@ def cluster(df, config, verbose=False):
 
     # Check if the number of ROIs is higher than 2
     if len(df) < 3: 
-        df["cluster_number"] = -1 # noise
+        df["prediction"] = -1 # noise
         df["pseudo_label"] = 0 # noise
         
         if verbose:
             print("Only {} ROIs. It requires at least 3 ROIs to perform clustering".format(len(df))) 
     else:
         if verbose:
-            print(f"Labeling '{df['categories'][0]}' species with {cfg.METHOD}: {len(df)} ROIs\n")
+            print(f"Clustering '{df['categories'][0]}' species with {cfg.METHOD}: {len(df)} ROIs\n")
 
         # Prepare the embeddings of the categories
         X = df.loc[:, df.columns.str.startswith("emb")].to_numpy() 
@@ -71,38 +71,39 @@ def cluster(df, config, verbose=False):
 
             dbcv, cluster, eps, min_samples = estimate_parameters(X, min_samples, cfg.METRIC)
 
-        if verbose:                
-            # Get the predicted labels and the number of clusters (excluding noise)
-            clusters = len(np.unique(cluster.labels_[cluster.labels_ >= 0])) 
-            noisy_percentage = round(np.sum(cluster.labels_ == -1) / X.shape[0], 2) * 100           
-            print(f'Number of clusters found (excluding noise): {clusters} (min_samples={min_samples}, eps={eps})')
-            print(f'Percentage of noise/outliers data: {noisy_percentage}%')
-            print(f'Density-Based Clustering Validation: {round(dbcv,4)}\n')
-
         # Add the label found with the clustering
-        df["cluster_number"] = cluster.labels_.reshape(-1, 1)
+        df["prediction"] = cluster.labels_.reshape(-1, 1)
 
         # Add the automatic label (SIGNAL = 1 or NOISE = 0) into the pseudo_label's column of the dataframe
         # Test if we want to consider only the biggest or all clusters that are not noise (-1) to be signal
-        
         if cfg.KEEP == 'BIGGEST':
-            # Set by default to 0 the pseudo_label of all
+            # Set by default to 0 the pseudo label of all
             df.loc["pseudo_label"] = int(0)
 
             # Find the cluster ID of the biggest cluster that is not noise
             try:
                 # Set to 1 the pseudo_label of the biggest cluster
-                biggest_cluster_ID = df.loc[df["cluster_number"] >= 0]["cluster_number"].value_counts().idxmax()
-                df.loc[df["cluster_number"] == biggest_cluster_ID, "pseudo_label"] = int(1)
+                biggest_cluster_ID = df.loc[df["prediction"] >= 0]["prediction"].value_counts().idxmax()
+                df.loc[df["prediction"] == biggest_cluster_ID, "pseudo_label"] = int(1)
             except:
                 # If there is only noise
                 pass
             
         elif cfg.KEEP == 'ALL':                
             # Set by to 0 the pseudo_label of the noise (cluster ID = -1)
-            df.loc[df["cluster_number"] < 0, "pseudo_label"] = int(0)
+            df.loc[df["prediction"] < 0, "pseudo_label"] = int(0)
             # Set by to 1 the pseudo_label of the signal (cluster ID >= 0)
-            df.loc[df["cluster_number"] >= 0, "pseudo_label"] = int(1)
+            df.loc[df["prediction"] >= 0, "pseudo_label"] = int(1)
+
+        if verbose:                
+            # Get the predicted labels and the number of clusters (excluding noise)
+            clusters = len(np.unique(cluster.labels_[cluster.labels_ >= 0])) 
+            noisy_percentage = round(np.sum(cluster.labels_ == -1) / X.shape[0], 2) * 100          
+            print(f'Number of clusters found (excluding noise): {clusters} (min_samples={min_samples}, eps={eps})')
+            if cfg.KEEP == 'BIGGEST':
+                print(f'Number of ROIs found in the biggest cluster: {df[df["pseudo_label"] == 1].shape[0]}')
+            print(f'Percentage of noise/outliers data: {noisy_percentage}%')
+            print(f'Density-Based Clustering Validation: {round(dbcv,4)}\n')
 
         return df
 
