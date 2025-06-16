@@ -9,10 +9,10 @@ from functools import partial
 from multiprocessing.pool import Pool
 
 from birdnet_analyzer import config as cfg
-from birdnet_analyzer import audio
 from birdnet_analyzer import model
 
 from dataset import XenoCanto
+from audio import detect_rois, split_audio
 
 
 class XCNet(XenoCanto):
@@ -203,24 +203,40 @@ class XCNet(XenoCanto):
             # Create dataframe to store the labels of single categories
             df_labels = pd.DataFrame()
 
+            with tqdm.tqdm(
+                total=len(files),
+                desc=f"Segmenting '{cat}' species ({str(count)}/{str(len(categories))})" if self.verbose else None,
+                unit="f"
+            ) as pbar:
+                segments = []
+                # Load and split the audio files
+                for f in files:
+                    # Detect regions of interest (ROIs)
+                    rois = detect_rois(f, morph_preset='medium')
+                    # Split audio with ROIs
+                    sig_splits = split_audio(f, rois)
+                    segments.append(sig_splits)
+                    # Update progress bar
+                    pbar.update(1)
+
             # Load files using thread pool
             with Pool(cfg.CPU_THREADS) as p:
                 tasks = []
-
-                # Load and split the audio files to extract features and/or make predictions
-                for f in files:
+                # Extract features and/or make predictions
+                for sig_splits in segments:
                     if method == 'clustering':
-                        task = p.apply_async(partial(self.split_and_extract, f=f, config=config))
+                        task = p.apply_async(partial(self.extract_and_predict, sig_splits=sig_splits, config=config))
                     else:
-                        task = p.apply_async(partial(self.split_and_extract, f=f, config=config, predict=True))
+                        task = p.apply_async(partial(self.extract_and_predict, sig_splits=sig_splits, config=config, predict=True))
                     tasks.append(task)
 
                 # Wait for tasks to complete and monitor progress with tqdm
                 with tqdm.tqdm(
                     total=len(tasks),
-                    desc=f"Loading '{cat}' species ({str(count)}/{str(len(categories))})" if self.verbose else None,
+                    desc=f"Extracting embeddings from BirdNET" if self.verbose else None,
                     unit="f"
                 ) as progress_bar:
+                    
                     # Iterate over the tasks and get the results
                     for task in tasks:
                         result = task.get()
@@ -328,13 +344,13 @@ class XCNet(XenoCanto):
         return self.df
     
 
-    def split_and_extract(self, f, config, predict=False):
+    def extract_and_predict(self, sig_splits, config, predict=False):
         """
-        This function opens an audio file, splits it into segments, and extracts feature embeddings.
+        This function extracts feature embeddings.
         It also predicts labels if a custom classifier is provided.
 
         Args:
-            f: Path to the audio file.
+            sig_splits: Segmented audio file.
             config: Configuration settings.
             predict: Boolean indicating whether to predict labels using a custom classifier. Default is False.
 
@@ -354,53 +370,17 @@ class XCNet(XenoCanto):
 
         # Set configuration parameters
         cfg.set_config(config)
-
-        # Try to open the audio file
-        try:
-            # Open audio file with FFmpeg
-            sig, rate = self.open(
-                f,
-                duration=cfg.SIG_LENGTH if cfg.SAMPLE_CROP_MODE == "first" else None,
-                fmin=cfg.BANDPASS_FMIN,
-                fmax=cfg.BANDPASS_FMAX
-            )
-
-        # if anything happens print the error and ignore the file
-        except Exception as e:
-            # Print Error
-            print(f"\t Error when loading file {f}", flush=True)
-            print(f"\t {e}", flush=True)
-            return np.array([]), np.array([])
-
-        # Crop training samples
-        if cfg.SAMPLE_CROP_MODE == "center":
-            sig_splits = [audio.crop_center(sig, rate, cfg.SIG_LENGTH)]
-        elif cfg.SAMPLE_CROP_MODE == "first":
-            sig_splits = [audio.split_signal(sig, rate, cfg.SIG_LENGTH, cfg.SIG_OVERLAP, cfg.SIG_MINLEN)[0]]
-        elif cfg.SAMPLE_CROP_MODE == "smart":
-            # Detect peaks in audio energy to identify potential signals
-            sig_splits = audio.smart_crop_signal(sig, rate, cfg.SIG_LENGTH, cfg.SIG_OVERLAP, cfg.SIG_MINLEN)
-        else:
-            sig_splits = audio.split_signal(sig, rate, cfg.SIG_LENGTH, cfg.SIG_OVERLAP, cfg.SIG_MINLEN)
-
-        # Set audio timestamps
-        start = 0
-        end = start + cfg.SIG_LENGTH
         
         # Get feature embeddings and predictions
-        batch_size = 1  # turns out that batch size 1 is the fastest, probably because of having to resize the model input when the number of samples in a batch changes
-
-        for i in range(0, len(sig_splits), batch_size):
+        for sig in sig_splits:
             # Get timestamps and file paths
-            timestamps.append([start, end])
-            file_paths.append(f)
-            # Advance start and end
-            start += cfg.SIG_LENGTH - cfg.SIG_OVERLAP
-            end = start + cfg.SIG_LENGTH
+            timestamps.append([sig['start'], sig['end']])
+            file_paths.append(sig['filename'])
 
             # Extract embeddings
-            batch_sig = sig_splits[i : i + batch_size]
-            e = model.embeddings(batch_sig)
+            # Ensure raw_audio is a numpy array with correct shape
+            raw_audio = np.expand_dims(sig['raw_audio'], axis=0)            
+            e = model.embeddings(raw_audio)
             # Add to training data
             embeddings.extend(e)
 
@@ -408,7 +388,7 @@ class XCNet(XenoCanto):
                 import operator
 
                 # Predict labels
-                p = model.predict(batch_sig)[0]
+                p = model.predict(raw_audio)[0]
                 # Logits or sigmoid activations?
                 if cfg.APPLY_SIGMOID:
                     p = model.flat_sigmoid(np.array(p), sensitivity=-cfg.SIGMOID_SENSITIVITY)
@@ -473,21 +453,21 @@ class XCNet(XenoCanto):
 if __name__ == "__main__":
 
     # Create an instance of the XCNet class
-    xcnet = XCNet(save_path='train_data')
+    # xcnet = XCNet(save_path='train_data')
     
     # Build dataset from Xeno-Canto and save to csv
-    xcnet.data(csv_filename='xc_dataset.csv')
-    # xcnet.download()
+    # xcnet.data(csv_filename='xc_dataset.csv')
+    # xcnet.download(dataset='train_data/xc_dataset.csv')
     # Label data with clustering and save to cache
-    # xcnet.labeling(dataset='xc_dataset.csv', method='clustering', save_cache="train_cache.npz")
+    # xcnet.labeling(dataset='train_data/xc_dataset.csv', method='clustering', csv_filename="labels.csv")
     # # Train model with pseudo-labeled dataset and save
     # xcnet.train(load_cache='train_data/train_cache.npz', save_model='xcnet.tflite')
 
     # # Label unlabeled dataset with custom classifier and plot the results
-    # xcnet = XCNet(save_path='test_data')
+    xcnet = XCNet(save_path='test_data')
     # xcnet.labeling(dataset='test_data', method='classification', csv_filename='labels.csv')
-    # # xcnet.labeling(dataset='test_data', method='clustering', keep='all', csv_filename='labels.csv')
-    # xcnet.plot()
+    xcnet.labeling(dataset='test_data', method='clustering', keep='all', csv_filename='labels.csv')
+    xcnet.plot()
 
 
 

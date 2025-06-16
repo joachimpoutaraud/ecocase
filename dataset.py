@@ -274,7 +274,7 @@ class XenoCanto():
 
     def download(self, dataset=None, csv_filename=None):
         """
-        Download audio files from dataFrame.
+        Download audio files from XenoCanto.
         
         Args:
             dataset (str or pd.DataFrame, optional): Path to the dataset CSV file or a pandas DataFrame. Default is None.
@@ -283,8 +283,6 @@ class XenoCanto():
             
         if self.verbose:
             print('\n====================== DOWNLOAD AUDIO FILES ======================\n')
-
-        from urllib.parse import urlparse
 
         # Check if dataset is a path to a dataframe, audio file or folder
         if type(dataset) == str:
@@ -308,19 +306,18 @@ class XenoCanto():
             # Prepare arguments for parallel processing
             for _, row in self.df.iterrows():
                 path = row['file']
-                id_number = urlparse(path).path.split('/')[1]
 
                 if 'start' in row:
                     file_path = os.path.join(
                     self.save_path,
                     row['categories'].replace(' ', '_'),
-                    f"XC{int(id_number)}_{float(row['start'])}_{float(row['end'])}.wav"
+                    f"XC{int(row['id'])}_{float(row['start'])}_{float(row['end'])}.wav"
                     )
                 else:
                     file_path = os.path.join(
                     self.save_path,
                     row['categories'].replace(' ', '_'),
-                    f"XC{int(id_number)}.wav"
+                    f"XC{int(row['id'])}.wav"
                     )
 
                 # Append the parallel processing tasks and local file paths

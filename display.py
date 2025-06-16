@@ -61,7 +61,11 @@ def create_thumbnails(row, save_path, encode=False):
         if not os.path.exists(save_path):
             os.makedirs(save_path) 
 
-        filename = os.path.splitext(os.path.basename(row.file))[0]
+        # Check if row.file is a URL or a local file
+        if str(row.file).startswith(('http://', 'https://')):
+            filename = os.path.splitext(os.path.basename(os.path.dirname(row.file)))[0]
+        else:
+            filename = os.path.splitext(os.path.basename(row.file))[0]
 
         # Save image to disk
         img_filename = f"{str(filename)}_{str(row.start)}_{str(row.end)}.png"

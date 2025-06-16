@@ -10,7 +10,7 @@ from birdnet_analyzer import config as cfg
 
 
 def load_audio(path, sr=cfg.SAMPLE_RATE, fmin=cfg.BANDPASS_FMIN, fmax=cfg.BANDPASS_FMAX, offset=0.0, duration=None, 
-               denoise=True, noise_floor=-30, sample_noise=0.5, order=5, output_filename=None):
+               denoise=True, sample_noise=0.5, order=1, output_filename=None):
     
     # Build FFmpeg command
     cmd = ["ffmpeg", "-y", "-hide_banner", "-ss", str(offset), "-i", str(path)]
@@ -27,7 +27,8 @@ def load_audio(path, sr=cfg.SAMPLE_RATE, fmin=cfg.BANDPASS_FMIN, fmax=cfg.BANDPA
         filters += [
             "asendcmd=0.0 afftdn sn start",
             f"asendcmd={sample_noise} afftdn sn stop",
-            *[f"afftdn=nf={noise_floor}:track_residual=enabled" for _ in range(order)]
+            *[f"afftdn=tn=enabled:tr=enabled" for _ in range(order)]
+            # *[f"afftdn=nf=-80:tr=enabled" for _ in range(order)]
         ]
     af = ",".join(filters)
     
@@ -113,7 +114,7 @@ def split_audio(path, rois, min_duration=cfg.SIG_MINLEN, max_duration=cfg.SIG_LE
                     "end": seg_start + max_duration,
                     "f_min": f_min,
                     "f_max": f_max,
-                    "filename": output_name,
+                    "filename": path,
                     "raw_audio": None  # Placeholder, will be filled below
                 })
 
@@ -123,9 +124,11 @@ def split_audio(path, rois, min_duration=cfg.SIG_MINLEN, max_duration=cfg.SIG_LE
                         f_min, f_max, output_name
                     ])
 
-        raw_audio = [f.result() for f in futures]
-        for i, (y, sr) in enumerate(raw_audio):
-            results[i]["raw_audio"] = y
+                raw_audio = [f.result() for f in futures]
+                for i, value in enumerate(raw_audio):
+                    if value is not None:
+                        y, sr = value
+                        results[i]["raw_audio"] = y
 
     if download:
         f_csv.close()
@@ -133,7 +136,7 @@ def split_audio(path, rois, min_duration=cfg.SIG_MINLEN, max_duration=cfg.SIG_LE
     return results
 
 
-def detect_rois(path, n_fft=2048, hop_length=1024, morph_preset="medium", time_thresh=20, denoise=True):
+def detect_rois(path, n_fft=2048, hop_length=1024, morph_preset="medium", time_thresh=20, denoise=True, plot=False):
 
     # Load audio with FFmpeg
     y, sr = load_audio(path, denoise=denoise)
@@ -171,12 +174,28 @@ def detect_rois(path, n_fft=2048, hop_length=1024, morph_preset="medium", time_t
         else:
             groups.append({"bbox": (x, y, w, h), "contours": [cnt]})
 
+    # Plot spectrogram and contours if requested
+    if plot:
+        import matplotlib.pyplot as plt
+
+        plt.figure(figsize=(12, 6))
+        plt.imshow(spectrogram_img, aspect='auto', origin='lower', cmap='gray')
+        for group in groups:
+            x, y, w, h = group["bbox"]
+            rect = plt.Rectangle((x, y), w, h, edgecolor='red', facecolor='none', linewidth=2)
+            plt.gca().add_patch(rect)
+        plt.title("Spectrogram with ROI Contours")
+        plt.xlabel("Time (frames)")
+        plt.ylabel("Frequency (bins)")
+        plt.tight_layout()
+        plt.show()
+
     return groups
                 
 
-path = "wat.mp3"  
-# Detect regions of interest (ROIs)
-rois = detect_rois(path, morph_preset='medium')
-# Split audio with ROIs
-sig_splits = split_audio(path, rois, csv_filename="rois.csv")
-print(sig_splits)
+# path = "test_data/SMA04635_20220318_182700.wav"  
+# # Detect regions of interest (ROIs)
+# rois = detect_rois(path, morph_preset='medium', plot=True)
+# # Split audio with ROIs
+# sig_splits = split_audio(path, rois, csv_filename="rois.csv", output_folder="rois", download=True)
+# print(sig_splits)
