@@ -45,8 +45,8 @@ SIG_FMIN: int = 0
 SIG_FMAX: int = 15000
 
 # Settings for bandpass filter
-BANDPASS_FMIN: int = 150
-BANDPASS_FMAX: int = 5000
+BANDPASS_FMIN: int = 0
+BANDPASS_FMAX: int = 15000
 
 # Top N species to display in selection table, ignored if set to None
 TOP_N = None

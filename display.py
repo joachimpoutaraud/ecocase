@@ -4,20 +4,19 @@ os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
 import numpy as np
 import pandas as pd
-import umap
 from IPython import get_ipython
 
+import umap
 from bokeh.plotting import figure, output_file, show
 from bokeh.models import ColumnDataSource, HoverTool
 from bokeh.transform import factor_cmap
 from bokeh.palettes import Category20
 
-from birdnet_analyzer import config as cfg
-
-from dataset import XenoCanto
+from audio import load_audio
 
 import warnings
 warnings.filterwarnings(action="ignore")
+from birdnet_analyzer import config as cfg
 
 
 def create_thumbnails(row, save_path, encode=False):
@@ -29,8 +28,7 @@ def create_thumbnails(row, save_path, encode=False):
     import soundfile as sf
     import os
 
-    xc = XenoCanto()
-    y, sr = xc.open(path=row.file, rate=16000, offset=row.start, duration=row.end - row.start, fmin=cfg.BANDPASS_FMIN, fmax=cfg.BANDPASS_FMAX)
+    y, sr = load_audio(path=row.file, sr=16000, offset=row.start, duration=row.end - row.start, fmin=cfg.BANDPASS_FMIN, fmax=cfg.BANDPASS_FMAX)
 
     S = librosa.feature.melspectrogram(y=y, sr=sr)
     S_db = librosa.power_to_db(S, ref=np.max)
