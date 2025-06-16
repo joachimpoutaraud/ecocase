@@ -5,8 +5,7 @@ import numpy as np
 
 import tqdm
 from pathlib import Path
-from functools import partial
-from multiprocessing.pool import Pool
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from birdnet_analyzer import config as cfg
 from birdnet_analyzer import model
@@ -208,6 +207,7 @@ class XCNet(XenoCanto):
                 desc=f"Segmenting '{cat}' species ({str(count)}/{str(len(categories))})" if self.verbose else None,
                 unit="f"
             ) as pbar:
+                
                 segments = []
                 # Load and split the audio files
                 for f in files:
@@ -219,49 +219,42 @@ class XCNet(XenoCanto):
                     # Update progress bar
                     pbar.update(1)
 
-            # Load files using thread pool
-            with Pool(cfg.CPU_THREADS) as p:
-                tasks = []
-                # Extract features and/or make predictions
+            # Load files using parallel processing
+            with ProcessPoolExecutor(max_workers=cfg.CPU_THREADS) as executor:
+                futures = []
                 for sig_splits in segments:
                     if method == 'clustering':
-                        task = p.apply_async(partial(self.extract_and_predict, sig_splits=sig_splits, config=config))
+                        future = executor.submit(self.extract_and_predict, sig_splits, config, False)
                     else:
-                        task = p.apply_async(partial(self.extract_and_predict, sig_splits=sig_splits, config=config, predict=True))
-                    tasks.append(task)
+                        future = executor.submit(self.extract_and_predict, sig_splits, config, True)
+                    futures.append(future)
 
-                # Wait for tasks to complete and monitor progress with tqdm
                 with tqdm.tqdm(
-                    total=len(tasks),
-                    desc=f"Extracting embeddings from BirdNET" if self.verbose else None,
+                    total=len(futures),
+                    desc="Extracting embeddings from BirdNET" if self.verbose else None,
                     unit="f"
                 ) as progress_bar:
-                    
-                    # Iterate over the tasks and get the results
-                    for task in tasks:
-                        result = task.get()
-                        # Check if the result is not empty
+                    for future in as_completed(futures):
+                        result = future.result()
+                        
                         if len(result[0]) > 0:
+                            
                             df_batch = pd.DataFrame()
-                            # Add categories to the dataframe
                             df_batch['categories'] = [cat] * len(result[0])
-                            # Convert embeddings to numpy array and add to dataframe
                             emb_arr = np.asarray(result[0])
                             for i in range(emb_arr.shape[1]):
                                 df_batch['emb' + str(i+1).zfill(4)] = emb_arr[:, i]
-                            # Add timestamps and file paths to the dataframe
                             df_batch['start'] = [t[0] for t in result[1]]
                             df_batch['end'] = [t[1] for t in result[1]]
-                            df_batch['file'] = result[2]
+                            df_batch['fmin'] = [f[0] for f in result[2]]
+                            df_batch['fmax'] = [f[1] for f in result[2]]
+                            df_batch['file'] = result[3]
 
                             if method != 'clustering':
-                                # Add predictions and confidences to the dataframe
-                                df_batch['prediction'] = result[3]
-                                df_batch['confidence'] = result[4]
+                                df_batch['prediction'] = result[4]
+                                df_batch['confidence'] = result[5]
 
-                            # Concatenate the batch dataframe with the labels of single categories
                             df_labels = pd.concat([df_labels, df_batch], ignore_index=True)
-
                         # Update progress bar
                         progress_bar.update(1)
 
@@ -275,7 +268,7 @@ class XCNet(XenoCanto):
 
             # Concatenate dataFrames
             df_labeling = pd.concat([df_labeling, df_labels], ignore_index=True)
-
+            # Increment categories count
             count += 1
 
         # Keep only categories of interest
@@ -363,6 +356,7 @@ class XCNet(XenoCanto):
         """
 
         timestamps = []
+        frequencies = []
         file_paths = []
         embeddings = []
         predictions = []
@@ -375,6 +369,7 @@ class XCNet(XenoCanto):
         for sig in sig_splits:
             # Get timestamps and file paths
             timestamps.append([sig['start'], sig['end']])
+            frequencies.append([sig['fmin'], sig['fmax']])
             file_paths.append(sig['filename'])
 
             # Extract embeddings
@@ -409,7 +404,7 @@ class XCNet(XenoCanto):
                 predictions.append(p_sorted[0][0])  # Species name
                 confidences.append(p_sorted[0][1])  # Confidence score
 
-        return (embeddings, timestamps, file_paths, predictions, confidences) if predict else (embeddings, timestamps, file_paths)
+        return (embeddings, timestamps, frequencies, file_paths, predictions, confidences) if predict else (embeddings, timestamps, frequencies, file_paths)
     
     
     def plot(self, dataset=None, min_confidence=cfg.MIN_CONFIDENCE, thumbnails=True, encode=False, frame_width=1000, frame_height=600, point_size=5, html_filename='scatterplot.html'):
@@ -453,20 +448,20 @@ class XCNet(XenoCanto):
 if __name__ == "__main__":
 
     # Create an instance of the XCNet class
-    # xcnet = XCNet(save_path='train_data')
+    xcnet = XCNet(save_path='train_data')
     
     # Build dataset from Xeno-Canto and save to csv
-    # xcnet.data(csv_filename='xc_dataset.csv')
+    xcnet.data(csv_filename='xc_dataset.csv')
     # xcnet.download(dataset='train_data/xc_dataset.csv')
     # Label data with clustering and save to cache
-    # xcnet.labeling(dataset='train_data/xc_dataset.csv', method='clustering', csv_filename="labels.csv")
+    xcnet.labeling(method='clustering', keep='biggest', csv_filename="labels.csv")
     # # Train model with pseudo-labeled dataset and save
     # xcnet.train(load_cache='train_data/train_cache.npz', save_model='xcnet.tflite')
 
     # # Label unlabeled dataset with custom classifier and plot the results
-    xcnet = XCNet(save_path='test_data')
-    # xcnet.labeling(dataset='test_data', method='classification', csv_filename='labels.csv')
-    xcnet.labeling(dataset='test_data', method='clustering', keep='all', csv_filename='labels.csv')
+    # xcnet = XCNet(save_path='test_data')
+    # # xcnet.labeling(dataset='test_data', method='classification', csv_filename='labels.csv')
+    # xcnet.labeling(dataset='test_data', method='clustering', keep='all', csv_filename='labels.csv')
     xcnet.plot()
 
 
@@ -476,5 +471,5 @@ if __name__ == "__main__":
     ###########################################################################################
     # TODO LIST
     # 1) Whether to include the data labeled as noise as a category when training the model?
-    # 2) Update open function to bandpass filter and split audio files using FFmpeg
+    # 2) Add the possibility to Write ROIs to disk when splitting audio (for small CPUs)
     ###########################################################################################

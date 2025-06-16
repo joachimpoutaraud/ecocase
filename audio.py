@@ -10,7 +10,7 @@ from birdnet_analyzer import config as cfg
 
 
 def load_audio(path, sr=cfg.SAMPLE_RATE, fmin=cfg.BANDPASS_FMIN, fmax=cfg.BANDPASS_FMAX, offset=0.0, duration=None, 
-               denoise=True, sample_noise=0.5, order=1, output_filename=None):
+               denoise=True, sample_noise=0.5, order=3, output_filename=None):
     
     # Build FFmpeg command
     cmd = ["ffmpeg", "-y", "-hide_banner", "-ss", str(offset), "-i", str(path)]
@@ -28,7 +28,6 @@ def load_audio(path, sr=cfg.SAMPLE_RATE, fmin=cfg.BANDPASS_FMIN, fmax=cfg.BANDPA
             "asendcmd=0.0 afftdn sn start",
             f"asendcmd={sample_noise} afftdn sn stop",
             *[f"afftdn=tn=enabled:tr=enabled" for _ in range(order)]
-            # *[f"afftdn=nf=-80:tr=enabled" for _ in range(order)]
         ]
     af = ",".join(filters)
     
@@ -75,7 +74,7 @@ def split_audio(path, rois, min_duration=cfg.SIG_MINLEN, max_duration=cfg.SIG_LE
         writer = csv.writer(f_csv)
         writer.writerow(["ROI Index", "Start Time (s)", "End Time (s)", "Fmin (Hz)", "Fmax (Hz)", "Filename"])
 
-    with ThreadPoolExecutor() as executor:
+    with ThreadPoolExecutor(max_workers=cfg.CPU_THREADS) as executor:
         futures = []
         for idx, group in enumerate(rois):
             x, y, w, h = group["bbox"]
@@ -112,8 +111,8 @@ def split_audio(path, rois, min_duration=cfg.SIG_MINLEN, max_duration=cfg.SIG_LE
                     "segment_index": i + 1,
                     "start": seg_start,
                     "end": seg_start + max_duration,
-                    "f_min": f_min,
-                    "f_max": f_max,
+                    "fmin": f_min,
+                    "fmax": f_max,
                     "filename": path,
                     "raw_audio": None  # Placeholder, will be filled below
                 })

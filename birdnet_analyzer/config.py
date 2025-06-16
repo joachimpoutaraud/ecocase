@@ -61,7 +61,7 @@ AUDIO_SPEED: float = 1.0
 #########################
 
 # Number of audio files to download for each species
-NUM_FILES: int = 5  
+NUM_FILES: int = 10  
 
 # Xeno-Canto scientific species (e.g. ['Columba palumbus','Fringilla coelebs']) 
 # If None, species will be requested according to the Xeno-Canto searching parameters
@@ -152,7 +152,7 @@ ALLOWED_FILETYPES: list[str] = ["wav", "flac", "mp3", "ogg", "m4a", "wma", "aiff
 
 # Number of threads to use for inference.
 # Can be as high as number of CPUs in your system
-CPU_THREADS: int = 8
+CPU_THREADS: int = 2
 TFLITE_THREADS: int = 1
 
 # False will output logits, True will convert to sigmoid activations

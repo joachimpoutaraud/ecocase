@@ -28,7 +28,7 @@ def create_thumbnails(row, save_path, encode=False):
     import soundfile as sf
     import os
 
-    y, sr = load_audio(path=row.file, sr=16000, offset=row.start, duration=row.end - row.start, fmin=cfg.BANDPASS_FMIN, fmax=cfg.BANDPASS_FMAX)
+    y, sr = load_audio(path=row.file, sr=16000, offset=row.start, duration=row.end - row.start, fmin=row.fmin, fmax=row.fmax)
 
     S = librosa.feature.melspectrogram(y=y, sr=sr)
     S_db = librosa.power_to_db(S, ref=np.max)
@@ -121,11 +121,10 @@ def interactive_display(df, thumbnails=True, encode=False, frame_width=1000, fra
         from tqdm import tqdm
         import os
         
-        nb_cpu = os.cpu_count() 
         spectrograms, audio_files = [], []
 
         with tqdm(total=len(df), desc="Process image and audio thumbnails") as pbar: 
-            with ProcessPoolExecutor(max_workers=nb_cpu-1) as executor:
+            with ProcessPoolExecutor(max_workers=cfg.CPU_THREADS) as executor:
                 futures = [executor.submit(create_thumbnails, row, save_path, encode) for _, row in df.iterrows()]
             
                 for future in futures:
