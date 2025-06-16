@@ -1,15 +1,16 @@
 import os
 import pandas as pd
-import numpy as np
 
 import json
 import tqdm
 import time, datetime
 import urllib.request
 from pathlib import Path
+from functools import partial
 from multiprocessing.pool import Pool
 
-from birdnet_analyzer import audio
+from audio import load_audio
+
 from birdnet_analyzer import config as cfg
 
 import warnings
@@ -269,102 +270,11 @@ class XenoCanto():
         df = df[cols]                
 
         return df
-
-
-    def open(self, path: str, rate=cfg.SAMPLE_RATE, offset=0.0, duration=None, fmin=None, fmax=None):
-        """
-        Open an audio file from Xeno-Canto with FFmpeg and the given settings.
-
-        Args:
-            path (str): Path or URL to the audio file.
-            sample_rate (int): The sample rate at which the file should be processed.
-            offset (float): The starting offset.
-            duration (float): Maximum duration of the loaded content.
-            fmin (float): Minimum frequency for bandpass filtering.
-            fmax (float): Maximum frequency for bandpass filtering.
-
-        Returns:
-            Returns the audio time series and the sampling rate.
-        """
-
-        def open_audio_with_ffmpeg(command, retries=3, delay=30):
-
-            import subprocess
-            import time
-
-            for attempt in range(retries):
-                process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                out, err = process.communicate()
-                
-                if process.returncode == 0:
-                    return np.frombuffer(out, dtype='float32')
-                else:
-                    if "503" in err.decode():
-                        time.sleep(delay)
-                    else:
-                        break
-            
-            return np.frombuffer(out, dtype='float32')
-        
-        if duration is None:
-            command = [
-                'ffmpeg', '-y', '-hide_banner', '-ss', str(offset), '-i', str(path),
-                '-f', 'f32le', '-ar', str(rate), '-ac', '1', '-'
-            ]
-        else:
-            command = [
-                'ffmpeg', '-y', '-hide_banner', '-ss', str(offset), '-t', str(duration), '-i', str(path),
-                '-f', 'f32le', '-ar', str(rate), '-ac', '1', '-'
-            ]
-
-        # Open the audio file with FFmpeg         
-        sig = open_audio_with_ffmpeg(command)
-
-        if fmin is not None and fmax is not None:
-            sig = audio.bandpass(sig, rate, fmin, fmax)
-
-        return sig, rate
-    
-    
-    def write(self, row):
-        """
-        Write audio file from Xeno-Canto to the specified path.
-        Args:
-            row (pd.Series): A row from the DataFrame containing the audio file metadata.
-
-        Returns:
-            str: The path to the saved audio file.   
-        """
-        
-        import soundfile as sf
-        from urllib.parse import urlparse
-        
-        try:
-            # Check if the file is a URL or a local file
-            path = urlparse(row['file']).path
-            id_number = path.split('/')[1]
-
-            if 'start' in row:
-                sig, rate = self.open(row['file'], cfg.SAMPLE_RATE, row.start, duration=row.end - row.start)
-                output_file = os.path.join(os.path.join(self.save_path, row['categories'].replace(' ', '_')), f"XC{int(id_number)}_{float(row['start'])}_{float(row['end'])}.wav")
-            else:
-                sig, rate = self.open(row['file'], cfg.SAMPLE_RATE)
-                output_file = os.path.join(os.path.join(self.save_path, row['categories'].replace(' ', '_')), f"XC{int(id_number)}.wav")
-
-            sf.write(output_file, sig, rate, format='wav')
-            
-            # Return updated file path
-            return output_file
-            
-        except Exception as ex:
-            print(f"Error: Cannot analyze audio file {row.file}.", flush=True)
-            from birdnet_analyzer import utils
-            utils.write_error_log(ex)
     
 
     def download(self, dataset=None, csv_filename=None):
         """
-        Download audio files from Xeno-Canto.
+        Download audio files from dataFrame.
         
         Args:
             dataset (str or pd.DataFrame, optional): Path to the dataset CSV file or a pandas DataFrame. Default is None.
@@ -373,7 +283,9 @@ class XenoCanto():
             
         if self.verbose:
             print('\n====================== DOWNLOAD AUDIO FILES ======================\n')
-            
+
+        from urllib.parse import urlparse
+
         # Check if dataset is a path to a dataframe, audio file or folder
         if type(dataset) == str:
             ext = os.path.splitext(dataset)[1]
@@ -390,17 +302,34 @@ class XenoCanto():
             for species in species_list:
                 os.makedirs(os.path.join(self.save_path, species), exist_ok=True)
 
-        # Process rows in parallel
-        nb_cpu = os.cpu_count()
-        updated_file_paths = []
+        local_file_paths, tasks = [], []
         
-        with tqdm.tqdm(total=len(self.df), desc="Download audio files") as pbar:
-            with Pool(processes=nb_cpu - 1) as pool:
-                # Prepare arguments for starmap
-                rows = [row for _, row in self.df.iterrows()]
-                # Use partial to pass save_path if needed, or just row if not
-                for output_file in pool.imap(self.write, rows):
-                    updated_file_paths.append(output_file)
+        with Pool(processes=max(1, cfg.CPU_THREADS)) as pool:
+            # Prepare arguments for parallel processing
+            for _, row in self.df.iterrows():
+                path = row['file']
+                id_number = urlparse(path).path.split('/')[1]
+
+                if 'start' in row:
+                    file_path = os.path.join(
+                    self.save_path,
+                    row['categories'].replace(' ', '_'),
+                    f"XC{int(id_number)}_{float(row['start'])}_{float(row['end'])}.wav"
+                    )
+                else:
+                    file_path = os.path.join(
+                    self.save_path,
+                    row['categories'].replace(' ', '_'),
+                    f"XC{int(id_number)}.wav"
+                    )
+
+                # Append the parallel processing tasks and local file paths
+                tasks.append(pool.apply_async(partial(load_audio, path=path, output_filename=file_path)))
+                local_file_paths.append(file_path)
+
+            with tqdm.tqdm(total=len(tasks), desc="Download audio files") as pbar:
+                for task in tasks:
+                    task.get()
                     pbar.update(1)
 
         if csv_filename is not None:
@@ -408,7 +337,6 @@ class XenoCanto():
             save_path = Path(self.save_path)
             # Save and append dataframe 
             csv_filename = save_path / csv_filename
-            
             # Update the audio file paths of the dataframe 
-            self.df['file'] = updated_file_paths         
+            self.df['file'] = local_file_paths         
             self.df.to_csv(csv_filename, index=False, sep=";")

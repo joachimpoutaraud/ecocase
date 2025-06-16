@@ -17,10 +17,12 @@ def load_audio(path, sr=cfg.SAMPLE_RATE, fmin=cfg.BANDPASS_FMIN, fmax=cfg.BANDPA
     
     # Build filter chain for FFmpeg
     filters = []
+
     if fmin is not None:
         filters.append(f"highpass=f={fmin:.1f}")
     if fmax is not None:
         filters.append(f"lowpass=f={fmax:.1f}")
+
     if denoise:
         filters += [
             "asendcmd=0.0 afftdn sn start",
@@ -37,7 +39,10 @@ def load_audio(path, sr=cfg.SAMPLE_RATE, fmin=cfg.BANDPASS_FMIN, fmax=cfg.BANDPA
     if output_filename is not None:
         # Write audio to disk
         cmd += [output_filename]
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"Error writing audio file {output_filename}: {e}")
         return None
 
     # Load audio into memory

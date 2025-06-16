@@ -472,21 +472,22 @@ class XCNet(XenoCanto):
 
 if __name__ == "__main__":
 
-    # # Create an instance of the XCNet class
-    # xcnet = XCNet(save_path='train_data')
+    # Create an instance of the XCNet class
+    xcnet = XCNet(save_path='train_data')
     
-    # # # Build dataset from Xeno-Canto and save to csv
-    # # xcnet.data(csv_filename='xc_dataset.csv')
-    # # # Label data with clustering and save to cache
-    # # xcnet.labeling(method='clustering', save_cache="train_cache.npz")
+    # Build dataset from Xeno-Canto and save to csv
+    xcnet.data(csv_filename='xc_dataset.csv')
+    # xcnet.download()
+    # Label data with clustering and save to cache
+    # xcnet.labeling(dataset='xc_dataset.csv', method='clustering', save_cache="train_cache.npz")
     # # Train model with pseudo-labeled dataset and save
     # xcnet.train(load_cache='train_data/train_cache.npz', save_model='xcnet.tflite')
 
-    # Label unlabeled dataset with custom classifier and plot the results
-    xcnet = XCNet(save_path='test_data')
-    xcnet.labeling(dataset='test_data', method='classification', csv_filename='labels.csv')
-    # xcnet.labeling(dataset='test_data', method='clustering', keep='all', csv_filename='labels.csv')
-    xcnet.plot()
+    # # Label unlabeled dataset with custom classifier and plot the results
+    # xcnet = XCNet(save_path='test_data')
+    # xcnet.labeling(dataset='test_data', method='classification', csv_filename='labels.csv')
+    # # xcnet.labeling(dataset='test_data', method='clustering', keep='all', csv_filename='labels.csv')
+    # xcnet.plot()
 
 
 
