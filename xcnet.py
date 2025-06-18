@@ -449,20 +449,23 @@ if __name__ == "__main__":
 
     # Create an instance of the XCNet class
     xcnet = XCNet(save_path='train_data')
-    
-    # Build dataset from Xeno-Canto and save to csv
-    xcnet.data(csv_filename='xc_dataset.csv')
-    # xcnet.download(dataset='train_data/xc_dataset.csv')
+    # # Build dataset from Xeno-Canto and save to csv
+    xcnet.dataset(csv_filename='xc_dataset.csv', download=True)
     # Label data with clustering and save to cache
-    xcnet.labeling(method='clustering', keep='biggest', csv_filename="labels.csv")
+    xcnet.labeling(dataset='train_data/xc_dataset.csv', method='clustering', keep='biggest', csv_filename="labels.csv")
+    # Plot the results
+    xcnet.plot()
+
+
     # # Train model with pseudo-labeled dataset and save
     # xcnet.train(load_cache='train_data/train_cache.npz', save_model='xcnet.tflite')
+
 
     # # Label unlabeled dataset with custom classifier and plot the results
     # xcnet = XCNet(save_path='test_data')
     # # xcnet.labeling(dataset='test_data', method='classification', csv_filename='labels.csv')
     # xcnet.labeling(dataset='test_data', method='clustering', keep='all', csv_filename='labels.csv')
-    xcnet.plot()
+    # xcnet.plot()
 
 
 
@@ -470,6 +473,8 @@ if __name__ == "__main__":
 
     ###########################################################################################
     # TODO LIST
-    # 1) Whether to include the data labeled as noise as a category when training the model?
-    # 2) Add the possibility to Write ROIs to disk when splitting audio (for small CPUs)
+    # 1) Use default BirdNET labels for pseudo-labeling and train classifier to assign clusters
+    # 2) Whether to include the data labeled as noise as a category when training the model?
+    # 3) Improve parallel processing when loading ROIs in memory (not working at the moment)
+    # 4) Add more color possibilities for the display function
     ###########################################################################################

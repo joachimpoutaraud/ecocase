@@ -28,7 +28,7 @@ def create_thumbnails(row, save_path, encode=False):
     import soundfile as sf
     import os
 
-    y, sr = load_audio(path=row.file, sr=16000, offset=row.start, duration=row.end - row.start, fmin=row.fmin, fmax=row.fmax)
+    y, sr = load_audio(path=row.file, sr=16000, offset=row.start, duration=row.end - row.start, fmin=row.fmin, fmax=row.fmax, denoise=False)
 
     S = librosa.feature.melspectrogram(y=y, sr=sr)
     S_db = librosa.power_to_db(S, ref=np.max)
@@ -68,12 +68,12 @@ def create_thumbnails(row, save_path, encode=False):
             filename = os.path.splitext(os.path.basename(row.file))[0]
 
         # Save image to disk
-        img_filename = f"{str(filename)}_{str(row.start)}_{str(row.end)}.png"
+        img_filename = f"{str(filename)}_{str(row.start)}_{str(row.end)}_{str(row.fmin)}_{str(row.fmax)}.png"
         plt.savefig(os.path.join(save_path, img_filename), format='png', bbox_inches='tight', pad_inches=0)
         plt.close()
 
         # Save audio to disk
-        audio_filename = f"{str(filename)}_{str(row.start)}_{str(row.end)}.wav"
+        audio_filename = f"{str(filename)}_{str(row.start)}_{str(row.end)}_{str(row.fmin)}_{str(row.fmax)}.wav"
         sf.write(os.path.join(save_path, audio_filename), y, sr, format='wav')
 
         # Only return file paths from thumbnails folder for writing html file
@@ -97,7 +97,7 @@ def interactive_display(df, thumbnails=True, encode=False, frame_width=1000, fra
 
     if X.shape[1] > 2:
         # Fit the UMAP model and transform the data
-        reducer = umap.UMAP(n_components=2, metric=cfg.METRIC, random_state=cfg.RANDOM_SEED)
+        reducer = umap.UMAP(n_components=2, random_state=cfg.RANDOM_SEED)
         y = pd.factorize(labels)[0] # Convert labels to numeric values
         X = reducer.fit_transform(X, y=y)
 
@@ -190,6 +190,7 @@ def interactive_display(df, thumbnails=True, encode=False, frame_width=1000, fra
         source = ColumnDataSource(data=dict(x=x, y=y, label=labels.astype(str).tolist()))
         p = figure(frame_width=frame_width, frame_height=frame_height, title=f"{cfg.METHOD} interactive scatter plot", tools="pan,wheel_zoom,reset")
         p.scatter('x', 'y', size=point_size, color=mapper, source=source)
-        
+
+    import os    
     output_file(os.path.join(save_path, html_filename))
     show(p)

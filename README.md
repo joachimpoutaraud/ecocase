@@ -16,11 +16,8 @@ from xcnet import XCNet
 
 # Create instance of XenoCanto class
 xcnet = XCNet()
-
 # Query Xeno-Canto database and build dataset from metadata
-xcnet.data(csv_filename='xc_dataset.csv')
+xcnet.dataset(csv_filename='xc_dataset.csv', download=True)
 # Label training data using clustering and save to cache
-xcnet.labeling(method='clustering', save_cache="train_cache.npz")
-# Download audio files from the training dataset
-xcnet.download()
+xcnet.labeling(method='clustering', keep='biggest', save_cache="train_cache.npz")
 ```

@@ -70,7 +70,7 @@ class XenoCanto():
         self.overwrite = overwrite
 
 
-    def data(self, csv_filename=None):
+    def dataset(self, csv_filename=None, download=True):
         """
         Query Xeno-Canto database and build a dataset from the metadata.
         The dataset is a pandas dataframe containing all the recordings metadata matching the Xeno-Canto searching parameters.
@@ -134,15 +134,18 @@ class XenoCanto():
         if len(self.df) > 0:
             # Rearrange index to be sure to have unique and increasing index
             self.df.reset_index(drop=True, inplace=True)
-            
-        if csv_filename is not None:            
-            if self.save_path is not None:
-                # Format save_path into Path
-                save_path = Path(self.save_path)
-                # Save and append dataframe 
-                csv_filename = save_path / csv_filename
-            # Save dataframe
-            self.df.to_csv(csv_filename, sep=";", encoding='utf-8', index=False, index_label='id') 
+
+        if download:
+            self.df = self.download(csv_filename=csv_filename)
+        else:
+            if csv_filename is not None:            
+                if self.save_path is not None:
+                    # Format save_path into Path
+                    save_path = Path(self.save_path)
+                    # Save and append dataframe 
+                    csv_filename = save_path / csv_filename
+                # Save dataframe
+                self.df.to_csv(csv_filename, sep=";", encoding='utf-8', index=False, index_label='id')
 
         return self.df
     
@@ -337,3 +340,5 @@ class XenoCanto():
             # Update the audio file paths of the dataframe 
             self.df['file'] = local_file_paths         
             self.df.to_csv(csv_filename, index=False, sep=";")
+
+        return self.df
