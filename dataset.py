@@ -324,7 +324,7 @@ class XenoCanto():
                     )
 
                 # Append the parallel processing tasks and local file paths
-                tasks.append(pool.apply_async(partial(load_audio, path=path, output_filename=file_path)))
+                tasks.append(pool.apply_async(partial(load_audio, path=path, dynaudnorm=False, denoise=False, output_filename=file_path)))
                 local_file_paths.append(file_path)
 
             with tqdm.tqdm(total=len(tasks), desc="Download audio files") as pbar:
