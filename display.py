@@ -152,13 +152,14 @@ def interactive_display(df, thumbnails=True, encode=False, frame_width=1000, fra
             <div style="font-size: 12px; color: #966;">Label: @label</div>
         """
 
-        # if set(['lat', 'lng']).issubset(df.columns):
-        #     data_dict.update(lat=df['lat'].astype(str).tolist(), 
-        #              lng=df['lng'].astype(str).tolist())
-        #     tooltips += """
-        #     <div style="font-size: 12px; color: #966;">Latitude: @lat</div>
-        #     <div style="font-size: 12px; color: #966;">Longitude: @lng</div>
-        #     """
+        if set(['lat', 'lng']).issubset(df.columns):
+            data_dict.update(lat=df['lat'].astype(str).tolist(), 
+                     lng=df['lng'].astype(str).tolist())
+            tooltips += """
+            <div style="font-size: 12px; color: #966;">Latitude: @lat</div>
+            <div style="font-size: 12px; color: #966;">Longitude: @lng</div>
+            """
+            
         if 'confidence' in df.columns:
             data_dict.update(confidence=df['confidence'].to_numpy())
             tooltips += """

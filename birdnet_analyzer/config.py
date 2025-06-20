@@ -61,7 +61,8 @@ AUDIO_SPEED: float = 1.0
 #########################
 
 # Number of audio files to download for each species
-NUM_FILES: int = 20  
+# If None, all the files available in Xeno-Canto will be requested
+NUM_FILES: int = 10  
 
 # Xeno-Canto scientific species (e.g. ['Columba palumbus','Fringilla coelebs']) 
 # If None, species will be requested according to the Xeno-Canto searching parameters

@@ -11,7 +11,7 @@ from birdnet_analyzer import config as cfg
 from birdnet_analyzer import model
 
 from dataset import XenoCanto
-from audio import detect_rois, split_audio
+from audio import split_audio
 
 
 class XCNet(XenoCanto):
@@ -55,41 +55,7 @@ class XCNet(XenoCanto):
             else:      
                 os.makedirs(self.save_path)  
 
-
-    def train(self, load_cache=cfg.TRAIN_CACHE_FILE, on_epoch_end=None, on_trial_result=None, on_data_load_end=None, autotune_directory="autotune", save_model=cfg.CUSTOM_CLASSIFIER):
-
-        from birdnet_analyzer.train import utils
-        
-        config = cfg.get_config()
-
-        if self.save_path is not None:
-            # Format save_path into Path
-            save_path = Path(self.save_path)
-            # Save and append directory to model and cache file
-            save_model = str(save_path / os.path.basename(save_model))
-            load_cache = str(save_path / os.path.basename(load_cache))
-
-            config['CUSTOM_CLASSIFIER'] = save_model
-            config['TRAIN_CACHE_FILE'] = load_cache
-        else:
-            # If save_path is None, use the default paths
-            config['CUSTOM_CLASSIFIER'] = save_model
-            config['TRAIN_CACHE_FILE'] = load_cache
-
-        if load_cache is not None:
-            config['TRAIN_CACHE_MODE'] = "load"
-        
-        # Set the configuration parameters
-        cfg.set_config(config)
-
-        # Train the model
-        utils.train_model(on_epoch_end=on_epoch_end, on_trial_result=on_trial_result, on_data_load_end=on_data_load_end, autotune_directory=autotune_directory)
-
-        if self.verbose:
-            print(f"\nSaving custom classifier: {save_model}", flush=True)
-
-
-    def labeling(self, dataset=None, method='clustering', keep=cfg.KEEP, csv_filename=None, save_cache=None):
+    def labeling(self, dataset=None, method='clustering', keep=cfg.KEEP, noise=False, csv_filename=None, save_cache=None):
         """ 
         Data-labeling using clustering or classification. By default, it uses clustering to label the data.
 
@@ -100,6 +66,8 @@ class XCNet(XenoCanto):
                 If 'clustering', the data will be labeled using density-based clustering (DBSCAN or HDBSCAN).
                 If 'classification', the data will be labeled using predictions of a classifier (e.g. BirdNet or custom classifier).
             keep (str, optional): If 'biggest', only the biggest cluster will be kept as signal. If 'all', all clusters will be kept as signal. Default is 'BIGGEST'.
+                This parameter is only used if method is set to 'clustering'.
+            noise (bool, optional): If True, the data labeled as noise will be kept. Default is False.
                 This parameter is only used if method is set to 'clustering'.
             csv_filename (str, optional): Name of the CSV file to save the labeled data. Default is None.
                 If None, the labeled data will not be saved to a CSV file.
@@ -155,45 +123,47 @@ class XCNet(XenoCanto):
         # Get unique categories from the dataframe
         unique_categories = self.df['categories'].unique()
         categories = list(sorted(unique_categories))
-        # Get valid labels
-        valid_labels = [label for label in categories if label.lower() not in cfg.NON_EVENT_CLASSES and not label.startswith("-")]
 
-        # Check if data is unlabeled or not
-        if any(label != "Unlabeled" for label in valid_labels):
-            # Check if binary classification
-            cfg.BINARY_CLASSIFICATION = len(valid_labels) == 1
+        # # Get valid labels
+        # valid_labels = [label for label in categories if label.lower() not in cfg.NON_EVENT_CLASSES and not label.startswith("-")]
 
-            # Validate the classes for binary classification
-            if cfg.BINARY_CLASSIFICATION:
-                if len([f for f in categories if f.startswith("-")]) > 0:
-                    raise Exception(
-                        "Negative labels can't be used with binary classification",
-                        "validation-no-negative-samples-in-binary-classification",
-                    )
-                if len([f for f in categories if f.lower() in cfg.NON_EVENT_CLASSES]) == 0:
-                    raise Exception(
-                        "Non-event samples are required for binary classification",
-                        "validation-non-event-samples-required-in-binary-classification",
-                    )
+        # # Check if data is unlabeled or not
+        # if any(label != "Unlabeled" for label in valid_labels):
+        #     # Check if binary classification
+        #     cfg.BINARY_CLASSIFICATION = len(valid_labels) == 1
 
-            # Check if multi label
-            cfg.MULTI_LABEL = len(valid_labels) > 1 and any("," in f for f in categories)
+        #     # Validate the classes for binary classification
+        #     if cfg.BINARY_CLASSIFICATION:
+        #         if len([f for f in categories if f.startswith("-")]) > 0:
+        #             raise Exception(
+        #                 "Negative labels can't be used with binary classification",
+        #                 "validation-no-negative-samples-in-binary-classification",
+        #             )
+        #         if len([f for f in categories if f.lower() in cfg.NON_EVENT_CLASSES]) == 0:
+        #             raise Exception(
+        #                 "Non-event samples are required for binary classification",
+        #                 "validation-non-event-samples-required-in-binary-classification",
+        #             )
 
-            # Check if multi-label and binary classficication
-            if cfg.BINARY_CLASSIFICATION and cfg.MULTI_LABEL:
-                raise Exception("Error: Binary classfication and multi-label not possible at the same time")
+        #     # Check if multi label
+        #     cfg.MULTI_LABEL = len(valid_labels) > 1 and any("," in f for f in categories)
 
-            # Only allow repeat upsampling for multi-label setting
-            if cfg.MULTI_LABEL and cfg.UPSAMPLING_RATIO > 0 and cfg.UPSAMPLING_MODE != "repeat":
-                raise Exception(
-                    "Only repeat-upsampling ist available for multi-label", "validation-only-repeat-upsampling-for-multi-label"
-                )
+        #     # Check if multi-label and binary classficication
+        #     if cfg.BINARY_CLASSIFICATION and cfg.MULTI_LABEL:
+        #         raise Exception("Error: Binary classfication and multi-label not possible at the same time")
+
+        #     # Only allow repeat upsampling for multi-label setting
+        #     if cfg.MULTI_LABEL and cfg.UPSAMPLING_RATIO > 0 and cfg.UPSAMPLING_MODE != "repeat":
+        #         raise Exception(
+        #             "Only repeat-upsampling ist available for multi-label", "validation-only-repeat-upsampling-for-multi-label"
+        #         )
 
         # Create a new dataframe for labeling
         df_labeling = pd.DataFrame()
         # Get configuration parameters
         config = cfg.get_config()
 
+        # Iterate over the categories
         count = 1
         # Iterate over the categories
         for cat in categories:
@@ -202,60 +172,82 @@ class XCNet(XenoCanto):
             # Create dataframe to store the labels of single categories
             df_labels = pd.DataFrame()
 
-            with tqdm.tqdm(
-                total=len(files),
-                desc=f"Segmenting '{cat}' species ({str(count)}/{str(len(categories))})" if self.verbose else None,
-                unit="f"
-            ) as pbar:
-                
-                segments = []
-                # Load and split the audio files
-                for f in files:
-                    # Detect regions of interest (ROIs)
-                    rois = detect_rois(f, morph_preset='medium')
-                    # Split audio with ROIs
-                    sig_splits = split_audio(f, rois)
-                    segments.append(sig_splits)
-                    # Update progress bar
-                    pbar.update(1)
-
-            # Load files using parallel processing
+            # Parallelize audio segmentation with split_audio
             with ProcessPoolExecutor(max_workers=cfg.CPU_THREADS) as executor:
-                futures = []
-                for sig_splits in segments:
-                    if method == 'clustering':
-                        future = executor.submit(self.extract_and_predict, sig_splits, config, False)
-                    else:
-                        future = executor.submit(self.extract_and_predict, sig_splits, config, True)
-                    futures.append(future)
+                split_futures = {
+                    executor.submit(split_audio, f): f for f in files
+                }
 
                 with tqdm.tqdm(
-                    total=len(futures),
-                    desc="Extracting embeddings from BirdNET" if self.verbose else None,
+                    total=len(split_futures),
+                    desc=f"Segmenting ROIs for '{cat}' species ({str(count)}/{str(len(categories))})" if self.verbose else None,
                     unit="f"
                 ) as progress_bar:
-                    for future in as_completed(futures):
-                        result = future.result()
-                        
-                        if len(result[0]) > 0:
-                            
-                            df_batch = pd.DataFrame()
-                            df_batch['categories'] = [cat] * len(result[0])
+                    for future in as_completed(split_futures):
+                        f = split_futures[future]
+                        try:
+                            df_split = future.result()
+                            if isinstance(df_split, pd.DataFrame) and not df_split.empty:
+                                # Add columns from self.df where 'file' matches
+                                row_data = self.df[self.df['file'] == f]
+                                missing_cols = [col for col in self.df.columns if col not in df_split.columns]
+                                # Create a DataFrame with missing columns
+                                if not row_data.empty and missing_cols:
+                                    prefix_df = pd.DataFrame({col: row_data.iloc[0][col] for col in missing_cols}, index=df_split.index)
+                                    df_split = pd.concat([prefix_df, df_split], axis=1)
+                                # Concatenate to df_labels
+                                df_labels = pd.concat([df_labels, df_split], ignore_index=True)
+                        except Exception as e:
+                            if self.verbose:
+                                print(f"Error segmenting {f}: {e}")
+                        progress_bar.update(1)
+
+            # Get list of raw audio files from the segmented dataframe
+            files = df_labels['raw_audio'].tolist()
+            # Pre-allocate embedding columns
+            emb_dim = None
+            # Try to get embedding dimension from a sample
+            if files:
+                sample_emb = self.extract_and_predict(files[0], config, method != 'clustering')
+                emb_dim = np.asarray(sample_emb[0]).shape[-1]
+                for i in range(emb_dim):
+                    col = f'emb{i+1:04d}'
+                    if col not in df_labels.columns:
+                        df_labels[col] = np.nan
+                if method != 'clustering':
+                    if 'prediction' not in df_labels.columns:
+                        df_labels['prediction'] = ""
+                    if 'confidence' not in df_labels.columns:
+                        df_labels['confidence'] = np.nan
+
+            # Parallelize embedding extraction and prediction over df_labels rows
+            with ProcessPoolExecutor(max_workers=cfg.CPU_THREADS) as executor:
+                extract_futures = {
+                    executor.submit(self.extract_and_predict, f, config, method != 'clustering'): idx
+                    for idx, f in enumerate(files)
+                }
+
+                with tqdm.tqdm(
+                    total=len(extract_futures),
+                    desc=f"Extracting embeddings from BirdNET" if self.verbose else None,
+                    unit="f"
+                ) as progress_bar:
+                    for future in as_completed(extract_futures):
+                        idx = extract_futures[future]
+                        try:
+                            result = future.result()
                             emb_arr = np.asarray(result[0])
+                            if emb_arr.ndim == 1:
+                                emb_arr = np.expand_dims(emb_arr, axis=0)
+                            # Assign embeddings to the row
                             for i in range(emb_arr.shape[1]):
-                                df_batch['emb' + str(i+1).zfill(4)] = emb_arr[:, i]
-                            df_batch['start'] = [t[0] for t in result[1]]
-                            df_batch['end'] = [t[1] for t in result[1]]
-                            df_batch['fmin'] = [f[0] for f in result[2]]
-                            df_batch['fmax'] = [f[1] for f in result[2]]
-                            df_batch['file'] = result[3]
-
+                                df_labels.at[idx, f'emb{i+1:04d}'] = emb_arr[0, i]
                             if method != 'clustering':
-                                df_batch['prediction'] = result[4]
-                                df_batch['confidence'] = result[5]
-
-                            df_labels = pd.concat([df_labels, df_batch], ignore_index=True)
-                        # Update progress bar
+                                df_labels.at[idx, 'prediction'] = result[1]
+                                df_labels.at[idx, 'confidence'] = result[2]
+                        except Exception as e:
+                            if self.verbose:
+                                print(f"Error extracting embeddings for {files[idx]}: {e}")
                         progress_bar.update(1)
 
             # Label data using density-based clustering if no custom classifier is provided
@@ -263,8 +255,10 @@ class XCNet(XenoCanto):
                 from clustering import cluster
                 config['KEEP'] = keep.upper()
                 df_labels = cluster(df_labels, config, self.verbose)
-                # Keep only data labeled as signal (i.e. not noise)
-                df_labels = df_labels[df_labels['pseudo_label'] == 1]
+
+                if noise is False:
+                    # Keep only data labeled as signal (i.e. not noise)
+                    df_labels = df_labels[df_labels['pseudo_label'] == 1]
 
             # Concatenate dataFrames
             df_labeling = pd.concat([df_labeling, df_labels], ignore_index=True)
@@ -335,15 +329,15 @@ class XCNet(XenoCanto):
             )
 
         return self.df
-    
 
-    def extract_and_predict(self, sig_splits, config, predict=False):
+
+    def extract_and_predict(self, y, config, predict=False):
         """
         This function extracts feature embeddings.
         It also predicts labels if a custom classifier is provided.
 
         Args:
-            sig_splits: Segmented audio file.
+            y: audio data.
             config: Configuration settings.
             predict: Boolean indicating whether to predict labels using a custom classifier. Default is False.
 
@@ -355,57 +349,73 @@ class XCNet(XenoCanto):
             confidences: List of confidence scores for the predictions (if predict is True).
         """
 
-        timestamps = []
-        frequencies = []
-        file_paths = []
-        embeddings = []
-        predictions = []
-        confidences = []
-
         # Set configuration parameters
         cfg.set_config(config)
         
-        # Get feature embeddings and predictions
-        for sig in sig_splits:
-            # Get timestamps and file paths
-            timestamps.append([sig['start'], sig['end']])
-            frequencies.append([sig['fmin'], sig['fmax']])
-            file_paths.append(sig['filename'])
+        # Extract embeddings
+        y = np.expand_dims(y, axis=0)          
+        embeddings = model.embeddings(y)
 
-            # Extract embeddings
-            # Ensure raw_audio is a numpy array with correct shape
-            raw_audio = np.expand_dims(sig['raw_audio'], axis=0)            
-            e = model.embeddings(raw_audio)
-            # Add to training data
-            embeddings.extend(e)
+        if predict:
+            import operator
+            # Predict labels
+            p = model.predict(y)[0]
+            # Logits or sigmoid activations?
+            if cfg.APPLY_SIGMOID:
+                p = model.flat_sigmoid(np.array(p), sensitivity=-cfg.SIGMOID_SENSITIVITY)
 
-            if predict:
-                import operator
+            # Get the labels file
+            if self.custom_classifier is not None:
+                # Get the labels of the custom classifier
+                filename = os.path.splitext(self.custom_classifier)[0]
+                # Here we assume that the labels file is in the same directory as the custom classifier
+                cfg.LABELS_FILE = filename + "_Labels.txt" 
 
-                # Predict labels
-                p = model.predict(raw_audio)[0]
-                # Logits or sigmoid activations?
-                if cfg.APPLY_SIGMOID:
-                    p = model.flat_sigmoid(np.array(p), sensitivity=-cfg.SIGMOID_SENSITIVITY)
+            # Assign scores to labels
+            labels = Path(cfg.LABELS_FILE).read_text(encoding="utf-8").splitlines() if cfg.LABELS_FILE else []
+            p_labels = zip(labels, p)
+            # Sort by score
+            p_sorted = sorted(p_labels, key=operator.itemgetter(1), reverse=True)
 
-                # Get the labels file
-                if self.custom_classifier is not None:
-                    # Get the labels of the custom classifier
-                    filename = os.path.splitext(self.custom_classifier)[0]
-                    # Here we assume that the labels file is in the same directory as the custom classifier
-                    cfg.LABELS_FILE = filename + "_Labels.txt" 
+            # Add top prediction and confidence to lists
+            predictions = p_sorted[0][0] # Species name
+            confidences = p_sorted[0][1] # Confidence score
 
-                # Assign scores to labels
-                labels = Path(cfg.LABELS_FILE).read_text(encoding="utf-8").splitlines() if cfg.LABELS_FILE else []
-                p_labels = zip(labels, p)
-                # Sort by score
-                p_sorted = sorted(p_labels, key=operator.itemgetter(1), reverse=True)
-                # Add top prediction and confidence to lists
-                predictions.append(p_sorted[0][0])  # Species name
-                confidences.append(p_sorted[0][1])  # Confidence score
-
-        return (embeddings, timestamps, frequencies, file_paths, predictions, confidences) if predict else (embeddings, timestamps, frequencies, file_paths)
+        return (embeddings, predictions, confidences) if predict else embeddings
     
+
+    def train(self, load_cache=cfg.TRAIN_CACHE_FILE, on_epoch_end=None, on_trial_result=None, on_data_load_end=None, autotune_directory="autotune", save_model=cfg.CUSTOM_CLASSIFIER):
+
+        from birdnet_analyzer.train import utils
+        
+        config = cfg.get_config()
+
+        if self.save_path is not None:
+            # Format save_path into Path
+            save_path = Path(self.save_path)
+            # Save and append directory to model and cache file
+            save_model = str(save_path / os.path.basename(save_model))
+            load_cache = str(save_path / os.path.basename(load_cache))
+
+            config['CUSTOM_CLASSIFIER'] = save_model
+            config['TRAIN_CACHE_FILE'] = load_cache
+        else:
+            # If save_path is None, use the default paths
+            config['CUSTOM_CLASSIFIER'] = save_model
+            config['TRAIN_CACHE_FILE'] = load_cache
+
+        if load_cache is not None:
+            config['TRAIN_CACHE_MODE'] = "load"
+        
+        # Set the configuration parameters
+        cfg.set_config(config)
+
+        # Train the model
+        utils.train_model(on_epoch_end=on_epoch_end, on_trial_result=on_trial_result, on_data_load_end=on_data_load_end, autotune_directory=autotune_directory)
+
+        if self.verbose:
+            print(f"\nSaving custom classifier: {save_model}", flush=True)
+
     
     def plot(self, dataset=None, min_confidence=cfg.MIN_CONFIDENCE, thumbnails=True, encode=False, frame_width=1000, frame_height=600, point_size=5, html_filename='scatterplot.html'):
         """
@@ -447,29 +457,34 @@ class XCNet(XenoCanto):
 
 if __name__ == "__main__":
 
-    # Create an instance of the XCNet class
-    xcnet = XCNet(save_path='train_data')
-    # # Build dataset from Xeno-Canto and save to csv
-    xcnet.dataset(csv_filename='xc_dataset.csv', download=True)
-    # Label data with clustering and save to cache
-    xcnet.labeling(dataset='train_data/xc_dataset.csv', method='clustering', keep='biggest', csv_filename="labels.csv")
-    # Plot the results
-    xcnet.plot()
+    # # Create an instance of the XCNet class
+    # xcnet = XCNet(save_path='train_data')
+    # # # Build dataset from Xeno-Canto and save to csv
+    # # xcnet.dataset(csv_filename='xc_dataset.csv', download=True)
+    # # Label data with clustering and save to cache
+    # xcnet.labeling(dataset='train_data/xc_dataset.csv', method='clustering', keep='all', csv_filename="labels.csv")
+    # # Plot the results
+    # xcnet.plot()
 
 
     # # Train model with pseudo-labeled dataset and save
     # xcnet.train(load_cache='train_data/train_cache.npz', save_model='xcnet.tflite')
 
 
-    # # Label unlabeled dataset with custom classifier and plot the results
-    # xcnet = XCNet(save_path='test_data')
-    # # xcnet.labeling(dataset='test_data', method='classification', csv_filename='labels.csv')
-    # xcnet.labeling(dataset='test_data', method='clustering', keep='all', csv_filename='labels.csv')
-    # xcnet.plot()
+    # Label unlabeled dataset with custom classifier and plot the results
+    xcnet = XCNet(save_path='test_data')
+    # xcnet.labeling(dataset='test_data', method='classification', csv_filename='labels.csv')
+    xcnet.labeling(dataset='test_data', method='clustering', keep='all', csv_filename='labels.csv')
+    xcnet.plot()
 
 
 
 
+
+
+
+    # from birdnet_analyzer.species.core import species
+    # species("species_list.txt", lat=4.645498315764353, lon=-52.65625921753347, week=11)
 
     ###########################################################################################
     # TODO LIST

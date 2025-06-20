@@ -14,10 +14,10 @@ You can install `ffmpeg` on your computer by following these [instructions](http
 ```python
 from xcnet import XCNet
 
-# Create instance of XenoCanto class
+# Create an instance of the XenoCanto network
 xcnet = XCNet()
 # Query Xeno-Canto database and build dataset from metadata
 xcnet.dataset(csv_filename='xc_dataset.csv', download=True)
-# Label training data using clustering and save to cache
+# Label data for each species using clustering and save to cache
 xcnet.labeling(method='clustering', keep='biggest', save_cache="train_cache.npz")
 ```

@@ -78,6 +78,7 @@ class XenoCanto():
         Args:
             csv_filename (str, optional): Name of the CSV file to save the dataset. Default is None.
                 If None, the dataset will not be saved.
+            download (bool, optional): Whether to download audio files from Xeno-Canto to disk or not. Default is True.
 
         Returns:
             pandas.DataFrame: Dataframe containing all the recordings metadata matching the Xeno-Canto searching parameters.
@@ -323,9 +324,12 @@ class XenoCanto():
                     f"XC{int(row['id'])}.wav"
                     )
 
-                # Append the parallel processing tasks and local file paths
-                tasks.append(pool.apply_async(partial(load_audio, path=path, dynaudnorm=False, denoise=False, output_filename=file_path)))
-                local_file_paths.append(file_path)
+                try:
+                    # Append parallel processing tasks for downloading audio with local file paths
+                    tasks.append(pool.apply_async(partial(load_audio, path=path, dynaudnorm=False, denoise=False, output_filename=file_path)))
+                    local_file_paths.append(file_path)
+                except:
+                    pass
 
             with tqdm.tqdm(total=len(tasks), desc="Download audio files") as pbar:
                 for task in tasks:
