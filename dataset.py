@@ -70,7 +70,7 @@ class XenoCanto():
         self.overwrite = overwrite
 
 
-    def dataset(self, csv_filename=None, download=True):
+    def dataset(self, csv_filename=None, download=False):
         """
         Query Xeno-Canto database and build a dataset from the metadata.
         The dataset is a pandas dataframe containing all the recordings metadata matching the Xeno-Canto searching parameters.

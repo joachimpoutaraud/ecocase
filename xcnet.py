@@ -55,7 +55,7 @@ class XCNet(XenoCanto):
             else:      
                 os.makedirs(self.save_path)  
 
-    def labeling(self, dataset=None, method='clustering', keep=cfg.KEEP, noise=False, csv_filename=None, save_cache=None):
+    def labeling(self, dataset=None, method='clustering', keep=cfg.KEEP, noise=False, min_confidence=cfg.MIN_CONFIDENCE, csv_filename=None, save_cache=None):
         """ 
         Data-labeling using clustering or classification. By default, it uses clustering to label the data.
 
@@ -66,7 +66,6 @@ class XCNet(XenoCanto):
                 If 'clustering', the data will be labeled using density-based clustering (DBSCAN or HDBSCAN).
                 If 'classification', the data will be labeled using predictions of a classifier (e.g. BirdNet or custom classifier).
             keep (str, optional): If 'biggest', only the biggest cluster will be kept as signal. If 'all', all clusters will be kept as signal. Default is 'BIGGEST'.
-                This parameter is only used if method is set to 'clustering'.
             noise (bool, optional): If True, the data labeled as noise will be kept. Default is False.
                 This parameter is only used if method is set to 'clustering'.
             csv_filename (str, optional): Name of the CSV file to save the labeled data. Default is None.
@@ -80,7 +79,6 @@ class XCNet(XenoCanto):
 
         if dataset is not None:
             if isinstance(dataset, str) and os.path.isdir(dataset):
-
                 # Get list of subfolders in the dataset folder
                 path = filter(lambda el: os.path.isdir(os.path.join(dataset, el)), os.listdir(dataset))
                 subfolders = sorted(path)
@@ -113,12 +111,14 @@ class XCNet(XenoCanto):
 
             elif isinstance(dataset, str) and dataset.lower().endswith('.csv') and os.path.isfile(dataset):
                 self.df = pd.read_csv(dataset, sep=";")
+            elif isinstance(dataset, pd.DataFrame):
+                self.df = dataset
             else:
                 raise ValueError("Provided dataset path is not a directory or a valid CSV file.")
         else:
             # If self.df is already a DataFrame, do nothing; otherwise, get the dataset using the Xeno-Canto parent class
             if not isinstance(getattr(self, 'df', None), pd.DataFrame):
-                self.df = self.data(csv_filename=csv_filename)
+                self.df = self.dataset(csv_filename=csv_filename)
 
         # Get unique categories from the dataframe
         unique_categories = self.df['categories'].unique()
@@ -157,30 +157,31 @@ class XCNet(XenoCanto):
         #         raise Exception(
         #             "Only repeat-upsampling ist available for multi-label", "validation-only-repeat-upsampling-for-multi-label"
         #         )
-
+        
         # Create a new dataframe for labeling
         df_labeling = pd.DataFrame()
         # Get configuration parameters
         config = cfg.get_config()
 
         # Iterate over the categories
-        count = 1
-        # Iterate over the categories
-        for cat in categories:
+        for c, cat in enumerate(categories):
             # Get list of files
             files = self.df[self.df['categories'] == cat]['file'].tolist()
             # Create dataframe to store the labels of single categories
             df_labels = pd.DataFrame()
 
-            # Parallelize audio segmentation with split_audio
+            ################################################################
+            ### Parallelize audio segmentation with split_audio function ###
+            ################################################################
+            
             with ProcessPoolExecutor(max_workers=cfg.CPU_THREADS) as executor:
                 split_futures = {
-                    executor.submit(split_audio, f): f for f in files
+                    executor.submit(split_audio, f, True): f for f in files
                 }
 
                 with tqdm.tqdm(
                     total=len(split_futures),
-                    desc=f"Segmenting ROIs for '{cat}' species ({str(count)}/{str(len(categories))})" if self.verbose else None,
+                    desc=f"Segmenting ROIs for '{cat}' species ({str(c+1)}/{str(len(categories))})" if self.verbose else None,
                     unit="f"
                 ) as progress_bar:
                     for future in as_completed(split_futures):
@@ -200,10 +201,12 @@ class XCNet(XenoCanto):
                         except Exception as e:
                             if self.verbose:
                                 print(f"Error segmenting {f}: {e}")
+                        # Update progress bar
                         progress_bar.update(1)
 
-            # Get list of raw audio files from the segmented dataframe
-            files = df_labels['raw_audio'].tolist()
+            # Get list of rois from the segmented dataframe
+            files = df_labels['rois'].tolist()
+            
             # Pre-allocate embedding columns
             emb_dim = None
             # Try to get embedding dimension from a sample
@@ -220,7 +223,10 @@ class XCNet(XenoCanto):
                     if 'confidence' not in df_labels.columns:
                         df_labels['confidence'] = np.nan
 
-            # Parallelize embedding extraction and prediction over df_labels rows
+            ###########################################################################
+            ### Parallelize embedding extraction and prediction over df_labels rows ###
+            ###########################################################################
+            
             with ProcessPoolExecutor(max_workers=cfg.CPU_THREADS) as executor:
                 extract_futures = {
                     executor.submit(self.extract_and_predict, f, config, method != 'clustering'): idx
@@ -248,41 +254,50 @@ class XCNet(XenoCanto):
                         except Exception as e:
                             if self.verbose:
                                 print(f"Error extracting embeddings for {files[idx]}: {e}")
+                        # Update progress bar
                         progress_bar.update(1)
 
-            # Label data using density-based clustering if no custom classifier is provided
+            # Label data using density-based clustering
             if method == 'clustering':
                 from clustering import cluster
                 config['KEEP'] = keep.upper()
+                # Cluster the data
                 df_labels = cluster(df_labels, config, self.verbose)
 
                 if noise is False:
                     # Keep only data labeled as signal (i.e. not noise)
                     df_labels = df_labels[df_labels['pseudo_label'] == 1]
-
+                else:
+                    df_labels = df_labels[df_labels['pseudo_label'].notna()]
+                    
+            # Label data with minimum confidence value
+            elif method == 'classification':
+                df_labels = df_labels[df_labels['confidence'] > min_confidence]
+                if keep.upper() == 'BIGGEST':
+                    # Keep only the biggest cluster (most common prediction label)
+                    biggest_prediction = df_labels["prediction"].value_counts().idxmax()
+                    df_labels = df_labels[df_labels["prediction"] == biggest_prediction]
+                
+            else:
+                raise ValueError("Method must be either 'clustering' or 'classification'.")
+                
             # Concatenate dataFrames
             df_labeling = pd.concat([df_labeling, df_labels], ignore_index=True)
-            # Increment categories count
-            count += 1
 
         # Keep only categories of interest
-        self.df = df_labeling[df_labeling.categories.isin(unique_categories)]
-        # If there is only one category we analyze the repertoire of the species
+        self.df = df_labeling[df_labeling.categories.isin(unique_categories)]            
+        
+        # If there is only one category we can analyze the repertoire of the species
         if keep.upper() == 'ALL' and len(categories) == 1:
             # Add the cluster number to the categories to differentiate them
             self.df.categories = self.df.apply(lambda row: f"{row['categories']}_{row['prediction']}", axis=1) 
+            
         # Rearrange index to be sure to have unique and increasing index
         self.df.reset_index(drop=True, inplace=True)
 
         # Add embeddings and labels to the class instance
         self.embeddings = self.df.loc[:, self.df.columns.str.startswith("emb")].to_numpy()
-        
-        if method == 'clustering':
-            # If clustering, use categories as labels
-            self.labels = self.df.categories.astype(str)
-        else:
-            # If classification, use predictions as labels
-            self.labels = self.df.prediction.astype(str)
+        self.labels = self.df.prediction.astype(str)
 
         if csv_filename is not None:            
             if self.save_path is not None:
@@ -310,16 +325,26 @@ class XCNet(XenoCanto):
             config = cfg.set_config(config)
 
             if self.verbose:
-                print(f"Saving training data to cache: {cfg.TRAIN_CACHE_FILE}", flush=True)
+                print(f"Saving labeled data to cache: {cfg.TRAIN_CACHE_FILE}", flush=True)
 
             # Encode labels according to birdnet_analyzer format
-            one_hot_encoded = pd.get_dummies(self.labels)
+            valid_labels = [label for label in self.labels.unique() if label != "-1"]
+            # Create label vectors: 1 for valid label, 0 otherwise
+            label_vectors = []
+            for label in self.labels:
+                vector = np.zeros(len(valid_labels), dtype="float32")
+                if label in valid_labels:
+                    vector[valid_labels.index(label)] = 1
+                label_vectors.append(vector)
+            # Create a DataFrame with one-hot encoded labels
+            one_hot_encoded = pd.DataFrame(label_vectors, columns=valid_labels)
 
+            # Save data to cache file
             np.savez(
                 save_cache,
                 x_train=np.array(self.embeddings, dtype="float32"),
                 y_train=np.array(one_hot_encoded.values, dtype="float32"),
-                labels=categories,
+                labels=valid_labels,
                 binary_classification=cfg.BINARY_CLASSIFICATION,
                 multi_label=cfg.MULTI_LABEL,
                 fmin=cfg.BANDPASS_FMIN,
@@ -387,7 +412,7 @@ class XCNet(XenoCanto):
     def train(self, load_cache=cfg.TRAIN_CACHE_FILE, on_epoch_end=None, on_trial_result=None, on_data_load_end=None, autotune_directory="autotune", save_model=cfg.CUSTOM_CLASSIFIER):
 
         from birdnet_analyzer.train import utils
-        
+        # Get configuration parameters
         config = cfg.get_config()
 
         if self.save_path is not None:
@@ -396,7 +421,6 @@ class XCNet(XenoCanto):
             # Save and append directory to model and cache file
             save_model = str(save_path / os.path.basename(save_model))
             load_cache = str(save_path / os.path.basename(load_cache))
-
             config['CUSTOM_CLASSIFIER'] = save_model
             config['TRAIN_CACHE_FILE'] = load_cache
         else:
@@ -409,7 +433,6 @@ class XCNet(XenoCanto):
         
         # Set the configuration parameters
         cfg.set_config(config)
-
         # Train the model
         utils.train_model(on_epoch_end=on_epoch_end, on_trial_result=on_trial_result, on_data_load_end=on_data_load_end, autotune_directory=autotune_directory)
 
@@ -417,7 +440,7 @@ class XCNet(XenoCanto):
             print(f"\nSaving custom classifier: {save_model}", flush=True)
 
     
-    def plot(self, dataset=None, min_confidence=cfg.MIN_CONFIDENCE, thumbnails=True, encode=False, frame_width=1000, frame_height=600, point_size=5, html_filename='scatterplot.html'):
+    def plot(self, dataset=None, thumbnails=True, encode=False, frame_width=1000, frame_height=600, point_size=5, html_filename='scatterplot.html'):
         """
         Display the audio file and its spectrogram.
 
@@ -430,18 +453,17 @@ class XCNet(XenoCanto):
         
         from display import interactive_display
 
-        # Check if dataset is a path to a dataframe
+        # Check if dataset is already a pandas DataFrame
         if dataset is not None:
-            ext = os.path.splitext(dataset)[1]
-            # Check file extension
-            if ext == ".csv": 
-                self.df = pd.read_csv(dataset, sep=";")
+            if isinstance(dataset, pd.DataFrame):
+                self.df = dataset
+            elif isinstance(dataset, str):
+                ext = os.path.splitext(dataset)[1]
+                # Check file extension
+                if ext == ".csv":
+                    self.df = pd.read_csv(dataset, sep=";")
             else:
                 raise ValueError("Provided dataset path is not a valid CSV file.")
-
-        config = cfg.get_config()
-        config['MIN_CONFIDENCE'] = min_confidence
-        cfg.set_config(config)
 
         interactive_display(
             self.df, 
@@ -457,26 +479,36 @@ class XCNet(XenoCanto):
 
 if __name__ == "__main__":
 
-    # # Create an instance of the XCNet class
-    # xcnet = XCNet(save_path='train_data')
-    # # # Build dataset from Xeno-Canto and save to csv
-    # # xcnet.dataset(csv_filename='xc_dataset.csv', download=True)
-    # # Label data with clustering and save to cache
-    # xcnet.labeling(dataset='train_data/xc_dataset.csv', method='clustering', keep='all', csv_filename="labels.csv")
+    # Create an instance of the XCNet network with the species of interest
+    xcnet = XCNet(save_path='data')
+    
+    # Label unlabeled 'data' folder using density-based clustering and save all the labeled clusters with noise to cache
+    xcnet.labeling(dataset='data', method='clustering', keep='all', csv_filename='labels.csv', save_cache='xcnet.npz')    
+    # Train custom classifier model with labeled clusters and save to disk
+    xcnet.train(load_cache='data/xcnet.npz', save_model='xcnet.tflite')
+    
+    # # Create a new instance of the XCNet network with the model trained on the labeled clusters
+    # xcnet = XCNet(save_path='results', custom_classifier='data/xcnet.tflite')
+    
+    # # Request dataset of the species of interest in Xeno-Canto to see if we find it in the clusters
+    # xcnet.species_xc, xcnet.num_files = ['Tinamus major'], 50
+    # # Save the dataset to a CSV file
+    # xcnet.dataset(csv_filename='xc_dataset.csv') 
+    # Label species of interest with custom classifier to see if it is present in the labeled clusters
+    # xcnet.labeling(dataset='results/xc_dataset.csv', method='clustering', keep='biggest', csv_filename='labels.csv')
+
+
+
+    # # Label the dataset with the custom classifier
+    # import pandas as pd
+    # df = xcnet.df.drop_duplicates(subset='file', keep='first')
+    # xcnet.labeling(dataset=df, method='classification', min_confidence=0.7, csv_filename='classifier_labels.csv')
+
     # # Plot the results
+    # import pandas as pd
+    # df = pd.read_csv('data/labels.csv', sep=';')
+    # # df = df[df['prediction'] == 1]  # Get the cluster with the species of interest
     # xcnet.plot()
-
-
-    # # Train model with pseudo-labeled dataset and save
-    # xcnet.train(load_cache='train_data/train_cache.npz', save_model='xcnet.tflite')
-
-
-    # Label unlabeled dataset with custom classifier and plot the results
-    xcnet = XCNet(save_path='test_data')
-    # xcnet.labeling(dataset='test_data', method='classification', csv_filename='labels.csv')
-    xcnet.labeling(dataset='test_data', method='clustering', keep='all', csv_filename='labels.csv')
-    xcnet.plot()
-
 
 
 

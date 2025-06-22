@@ -81,11 +81,6 @@ def create_thumbnails(row, save_path, encode=False):
 
 
 def interactive_display(df, thumbnails=True, encode=False, frame_width=1000, frame_height=600, point_size=5, html_filename='scatterplot.html', save_path=None):  
-        
-    if 'confidence' in df.columns:
-        # Filter dataframe according to minimum confidence
-        noise_mask = df['confidence'] > cfg.MIN_CONFIDENCE
-        df = df[noise_mask]
 
     # Get the embeddings    
     X = df.loc[:, df.columns.str.startswith("emb")].to_numpy()

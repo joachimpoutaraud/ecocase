@@ -77,22 +77,16 @@ def cluster(df, config, verbose=False):
         # Add the automatic label (SIGNAL = 1 or NOISE = 0) into the pseudo_label's column of the dataframe
         # Test if we want to consider only the biggest or all clusters that are not noise (-1) to be signal
         if cfg.KEEP == 'BIGGEST':
-            # Set by default to 0 the pseudo label of all
-            df.loc["pseudo_label"] = int(0)
-
-            # Find the cluster ID of the biggest cluster that is not noise
-            try:
-                # Set to 1 the pseudo_label of the biggest cluster
-                biggest_cluster_ID = df.loc[df["prediction"] >= 0]["prediction"].value_counts().idxmax()
-                df.loc[df["prediction"] == biggest_cluster_ID, "pseudo_label"] = int(1)
-            except:
-                # If there is only noise
-                pass
-            
-        elif cfg.KEEP == 'ALL':                
-            # Set by to 0 the pseudo_label of the noise (cluster ID = -1)
+            # Set pseudo_label of noise (cluster ID = -1) to 0 
             df.loc[df["prediction"] < 0, "pseudo_label"] = int(0)
-            # Set by to 1 the pseudo_label of the signal (cluster ID >= 0)
+            # Set pseudo_label of the biggest cluster to 1
+            biggest_cluster_ID = df.loc[df["prediction"] >= 0]["prediction"].value_counts().idxmax()
+            df.loc[df["prediction"] == biggest_cluster_ID, "pseudo_label"] = int(1)
+
+        elif cfg.KEEP == 'ALL':                
+            # Set pseudo_label of noise (cluster ID = -1) to 0 
+            df.loc[df["prediction"] < 0, "pseudo_label"] = int(0)
+            # Set pseudo_label of signal (cluster ID >= 0) to 1 
             df.loc[df["prediction"] >= 0, "pseudo_label"] = int(1)
 
         if verbose:                
