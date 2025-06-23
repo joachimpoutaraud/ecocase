@@ -208,7 +208,7 @@ def split_audio(path, min_duration=cfg.SIG_MINLEN, max_duration=cfg.SIG_LENGTH, 
         y, _ = load_audio(**task["params"])
         # Remove "params" from dictionary and add raw_audio
         task = {k: v for k, v in task.items() if k != "params"}
-        task["raw_audio"] = y
+        task["rois"] = y
         return task
 
     if len(tasks) > 1:

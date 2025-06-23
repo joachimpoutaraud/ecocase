@@ -2,6 +2,7 @@ import os
 import shutil
 import pandas as pd
 import numpy as np
+import subprocess
 
 import tqdm
 from pathlib import Path
@@ -38,6 +39,13 @@ class XCNet(XenoCanto):
         self.verbose = verbose
         self.save_path = save_path
         self.overwrite = overwrite
+
+        # Check if FFmpeg is installed
+        try:
+            subprocess.check_call(['ffmpeg', '-version'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            msg = 'FFmpeg must be properly installed.\nMore information on how to install FFmpeg: https://github.com/fourMs/MGT-python/wiki/0-%E2%80%90-Installation'
+            raise ValueError(msg)
 
         if self.custom_classifier is not None:
             config = cfg.get_config()
@@ -268,6 +276,7 @@ class XCNet(XenoCanto):
                     # Keep only data labeled as signal (i.e. not noise)
                     df_labels = df_labels[df_labels['pseudo_label'] == 1]
                 else:
+                    # Keep data labeled as noise and signal
                     df_labels = df_labels[df_labels['pseudo_label'].notna()]
                     
             # Label data with minimum confidence value
@@ -481,28 +490,26 @@ if __name__ == "__main__":
 
     # Create an instance of the XCNet network with the species of interest
     xcnet = XCNet(save_path='data')
-    
     # Label unlabeled 'data' folder using density-based clustering and save all the labeled clusters with noise to cache
-    xcnet.labeling(dataset='data', method='clustering', keep='all', csv_filename='labels.csv', save_cache='xcnet.npz')    
+    xcnet.labeling(dataset='data', method='clustering', keep='all', csv_filename='labels.csv', save_cache='xcnet_data.npz')    
     # Train custom classifier model with labeled clusters and save to disk
-    xcnet.train(load_cache='data/xcnet.npz', save_model='xcnet.tflite')
+    xcnet.train(load_cache='data/xcnet_data.npz', save_model='xcnet.tflite')
+    xcnet.plot()
     
     # # Create a new instance of the XCNet network with the model trained on the labeled clusters
     # xcnet = XCNet(save_path='results', custom_classifier='data/xcnet.tflite')
-    
     # # Request dataset of the species of interest in Xeno-Canto to see if we find it in the clusters
-    # xcnet.species_xc, xcnet.num_files = ['Tinamus major'], 50
+    # xcnet.species_xc, xcnet.num_files = ['Nyctibius grandis'], 50
     # # Save the dataset to a CSV file
     # xcnet.dataset(csv_filename='xc_dataset.csv') 
-    # Label species of interest with custom classifier to see if it is present in the labeled clusters
+    # # Label species of interest with custom classifier to see if it is present in the labeled clusters
     # xcnet.labeling(dataset='results/xc_dataset.csv', method='clustering', keep='biggest', csv_filename='labels.csv')
-
-
 
     # # Label the dataset with the custom classifier
     # import pandas as pd
     # df = xcnet.df.drop_duplicates(subset='file', keep='first')
     # xcnet.labeling(dataset=df, method='classification', min_confidence=0.7, csv_filename='classifier_labels.csv')
+    # xcnet.plot()
 
     # # Plot the results
     # import pandas as pd
