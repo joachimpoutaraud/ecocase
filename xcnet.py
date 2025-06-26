@@ -196,14 +196,19 @@ class XCNet(XenoCanto):
                         f = split_futures[future]
                         try:
                             df_split = future.result()
+                            
                             if isinstance(df_split, pd.DataFrame) and not df_split.empty:
                                 # Add columns from self.df where 'file' matches
                                 row_data = self.df[self.df['file'] == f]
                                 missing_cols = [col for col in self.df.columns if col not in df_split.columns]
                                 # Create a DataFrame with missing columns
                                 if not row_data.empty and missing_cols:
-                                    prefix_df = pd.DataFrame({col: row_data.iloc[0][col] for col in missing_cols}, index=df_split.index)
-                                    df_split = pd.concat([prefix_df, df_split], axis=1)
+                                    prefix_df = pd.DataFrame({col: [row_data.iloc[0][col]] * len(df_split) for col in missing_cols}, index=df_split.index)
+                                    df_split = pd.concat([df_split, prefix_df], axis=1)
+                                # Ensure all columns from self.df are present in df_split
+                                for col in self.df.columns:
+                                    if col not in df_split.columns:
+                                        df_split[col] = row_data.iloc[0][col] if not row_data.empty else None
                                 # Concatenate to df_labels
                                 df_labels = pd.concat([df_labels, df_split], ignore_index=True)
                         except Exception as e:
@@ -237,8 +242,8 @@ class XCNet(XenoCanto):
             
             with ProcessPoolExecutor(max_workers=cfg.CPU_THREADS) as executor:
                 extract_futures = {
-                    executor.submit(self.extract_and_predict, f, config, method != 'clustering'): idx
-                    for idx, f in enumerate(files)
+                    executor.submit(self.extract_and_predict, f, config, method != 'clustering'): 
+                    idx for idx, f in enumerate(files)
                 }
 
                 with tqdm.tqdm(
@@ -268,7 +273,7 @@ class XCNet(XenoCanto):
             # Label data using density-based clustering
             if method == 'clustering':
                 from clustering import cluster
-                config['KEEP'] = keep.upper()
+                config['KEEP'] = keep.upper()                
                 # Cluster the data
                 df_labels = cluster(df_labels, config, self.verbose)
 
@@ -488,28 +493,28 @@ class XCNet(XenoCanto):
 
 if __name__ == "__main__":
 
-    # Create an instance of the XCNet network with the species of interest
-    xcnet = XCNet(save_path='data')
-    # Label unlabeled 'data' folder using density-based clustering and save all the labeled clusters with noise to cache
-    xcnet.labeling(dataset='data', method='clustering', keep='all', csv_filename='labels.csv', save_cache='xcnet_data.npz')    
-    # Train custom classifier model with labeled clusters and save to disk
-    xcnet.train(load_cache='data/xcnet_data.npz', save_model='xcnet.tflite')
-    xcnet.plot()
+    # # Create an instance of the XCNet network with the species of interest
+    # xcnet = XCNet(save_path='data')
+    # # Label unlabeled 'data' folder using density-based clustering and save all the labeled clusters with noise to cache
+    # xcnet.labeling(dataset='data', method='clustering', keep='all', csv_filename='labels.csv', save_cache='xcnet_data.npz')    
+    # # Train custom classifier model with labeled clusters and save to disk
+    # xcnet.train(load_cache='data/xcnet_data.npz', save_model='xcnet.tflite')
+    # xcnet.plot()
     
-    # # Create a new instance of the XCNet network with the model trained on the labeled clusters
-    # xcnet = XCNet(save_path='results', custom_classifier='data/xcnet.tflite')
+    # Create a new instance of the XCNet network with the model trained on the labeled clusters
+    xcnet = XCNet(save_path='results', custom_classifier='data/xcnet.tflite')
     # # Request dataset of the species of interest in Xeno-Canto to see if we find it in the clusters
-    # xcnet.species_xc, xcnet.num_files = ['Nyctibius grandis'], 50
+    xcnet.species_xc, xcnet.num_files = ['Nyctibius grandis'], 30
     # # Save the dataset to a CSV file
-    # xcnet.dataset(csv_filename='xc_dataset.csv') 
-    # # Label species of interest with custom classifier to see if it is present in the labeled clusters
-    # xcnet.labeling(dataset='results/xc_dataset.csv', method='clustering', keep='biggest', csv_filename='labels.csv')
+    xcnet.dataset(csv_filename='xc_dataset.csv', download=True) ### DOWNLOAD=FALSE DOES NOT WORK FOR THE MOMENT
+    # Label species of interest with custom classifier to see if it is present in the labeled clusters
+    xcnet.labeling(dataset='results/xc_dataset.csv', method='clustering', keep='biggest', csv_filename='labels.csv')
 
     # # Label the dataset with the custom classifier
     # import pandas as pd
     # df = xcnet.df.drop_duplicates(subset='file', keep='first')
     # xcnet.labeling(dataset=df, method='classification', min_confidence=0.7, csv_filename='classifier_labels.csv')
-    # xcnet.plot()
+    xcnet.plot()
 
     # # Plot the results
     # import pandas as pd

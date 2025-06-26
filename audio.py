@@ -70,7 +70,7 @@ def load_audio(path, sr=cfg.SAMPLE_RATE, fmin=cfg.BANDPASS_FMIN, fmax=cfg.BANDPA
             print(f"Error loading audio from {path} after {max_retries} attempts.")
             return None, sr
     
-    return y, sr
+    return np.array(y, dtype='float32'), sr
 
 
 def detect_rois(y, sr, n_fft=2048, hop_length=1024, morph_preset="medium", min_time_px=20, min_freq_px=20, plot=False):
@@ -111,7 +111,6 @@ def detect_rois(y, sr, n_fft=2048, hop_length=1024, morph_preset="medium", min_t
 
     # Find contours
     contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
     # Group ROIs (avoid nested loops for speed)
     bboxes = [cv2.boundingRect(cnt) for cnt in contours]
     bboxes = [b for b in bboxes if b[2] >= min_time_px and b[3] >= min_freq_px]
@@ -148,18 +147,25 @@ def detect_rois(y, sr, n_fft=2048, hop_length=1024, morph_preset="medium", min_t
             plt.gca().add_patch(rect)
         plt.title("Log-spectrogram with ROI Contours")
         plt.xlabel("Time (frames)")
-        plt.ylabel("Frequency (bins)")
+        plt.ylabel("Frequency (Hz)")
+        # Set y-ticks to log frequencies
+        ax = plt.gca()
+        yticks = ax.get_yticks()
+        yticks = yticks[yticks >= 0]
+        yticks = yticks[yticks < len(log_freqs)]
+        ax.set_yticks(yticks)
+        ax.set_yticklabels([f"{log_freqs[int(y)]:.0f}" for y in yticks])
         plt.tight_layout()
         plt.show()
 
     # Convert bbox values to time and frequency
     for r in rois:
         x, y, w, h = r["bbox"]
-        t_start = x * (hop_length / sr)
-        t_end = (x + w) * (hop_length / sr)
+        tstart = x * (hop_length / sr)
+        tend = (x + w) * (hop_length / sr)
         fmin = round(log_freqs[y], 3) if y < len(log_freqs) else None
         fmax = round(log_freqs[y + h], 3) if (y + h) < len(log_freqs) else None
-        r["bbox"] = (t_start, t_end, fmin, fmax)
+        r["bbox"] = (tstart, tend, fmin, fmax)
 
     return rois
 
@@ -169,7 +175,7 @@ def split_audio(path, min_duration=cfg.SIG_MINLEN, max_duration=cfg.SIG_LENGTH, 
     Splits audio into segments based on detected ROIs, using parallel processing for speed.
     Returns a pandas DataFrame with segment metadata and audio.
     """
-
+    
     audio_segments, tasks = [], []
 
     # Load audio once
@@ -178,30 +184,39 @@ def split_audio(path, min_duration=cfg.SIG_MINLEN, max_duration=cfg.SIG_LENGTH, 
     rois = detect_rois(y, sr)
 
     # Prepare segment extraction tasks
-    for idx, group in enumerate(rois):
-        t_start, t_end, f_min, f_max = group["bbox"]
-        dur = t_end - t_start
+    for r in rois:
+        tstart, tend, fmin, fmax = r["bbox"]
+        
+        # Skip segments shorter than min_duration
+        dur = tend - tstart
         if dur < min_duration:
             continue
-        segments = int(dur // max_duration)
-
+        
+        # Split segment into max_duration chunks, pad last if needed
+        segments = int(np.ceil(dur / max_duration))
         for i in range(segments):
-            seg_start = round(t_start + i * max_duration, 3)
+            seg_start = round(tstart + i * max_duration, 3)
+            seg_dur = min(max_duration, dur - i * max_duration)
+            # Skip segments shorter than min_duration
+            if seg_dur < min_duration:
+                continue
             tasks.append({
-                "start": seg_start,
-                "end": seg_start + max_duration,
-                "fmin": f_min,
-                "fmax": f_max,
-                "file": path,
-                "params": {
-                    "path": path,
-                    "offset": seg_start,
-                    "duration": max_duration,
-                    "fmin": f_min,
-                    "fmax": f_max,
-                    "denoise": denoise,
-                    "noise_profile": None, 
-                }
+            "start": seg_start,
+            "end": seg_start + max_duration,
+            "fmin": fmin,
+            "fmax": fmax,
+            "file": path,
+            "params": {
+                "path": path,
+                "sr": sr,
+                "fmin": fmin,
+                "fmax": fmax,
+                "offset": seg_start,
+                "duration": max_duration,
+                "dynaudnorm": True,
+                "denoise": denoise,
+                "noise_profile": None,
+            }
             })
 
     def extract_segment(task):
