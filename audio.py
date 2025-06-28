@@ -200,31 +200,37 @@ def split_audio(path, min_duration=cfg.SIG_MINLEN, max_duration=cfg.SIG_LENGTH, 
             # Skip segments shorter than min_duration
             if seg_dur < min_duration:
                 continue
+            # For the last segment, set duration to seg_dur, else max_duration
+            duration = max_duration if seg_dur >= max_duration else seg_dur
             tasks.append({
-            "start": seg_start,
-            "end": seg_start + max_duration,
-            "fmin": fmin,
-            "fmax": fmax,
-            "file": path,
-            "params": {
-                "path": path,
-                "sr": sr,
+                "start": seg_start,
+                "end": seg_start + duration,
                 "fmin": fmin,
                 "fmax": fmax,
-                "offset": seg_start,
-                "duration": max_duration,
-                "dynaudnorm": True,
-                "denoise": denoise,
-                "noise_profile": None,
-            }
+                "file": path,
+                "params": {
+                    "path": path,
+                    "sr": sr,
+                    "fmin": fmin,
+                    "fmax": fmax,
+                    "offset": seg_start,
+                    "duration": duration,
+                    "dynaudnorm": True,
+                    "denoise": denoise,
+                    "noise_profile": None,
+                }
             })
-
-    def extract_segment(task):
-        y, _ = load_audio(**task["params"])
-        # Remove "params" from dictionary and add raw_audio
-        task = {k: v for k, v in task.items() if k != "params"}
-        task["rois"] = y
-        return task
+                         
+        def extract_segment(task):
+            y, _ = load_audio(**task["params"])
+            # Pad audio if shorter than max_duration
+            expected_len = int(sr * max_duration)
+            if y is not None and len(y) < expected_len:
+                y = np.pad(y, (0, expected_len - len(y)), mode='constant')
+            # Remove "params" from dictionary and add raw_audio
+            task = {k: v for k, v in task.items() if k != "params"}
+            task["rois"] = y
+            return task
 
     if len(tasks) > 1:
         with ThreadPoolExecutor(max_workers=cfg.CPU_THREADS) as executor:

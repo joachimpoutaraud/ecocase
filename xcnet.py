@@ -217,24 +217,28 @@ class XCNet(XenoCanto):
                         # Update progress bar
                         progress_bar.update(1)
 
+            # Check if there are any ROIs to process
+            if df_labels['rois'].isnull().all():
+                if self.verbose:
+                    print(f"No ROIs found for category '{cat}', skipping embedding extraction.", flush=True)
+                continue
+
             # Get list of rois from the segmented dataframe
-            files = df_labels['rois'].tolist()
-            
+            files = df_labels['rois'].to_numpy()
             # Pre-allocate embedding columns
             emb_dim = None
             # Try to get embedding dimension from a sample
-            if files:
-                sample_emb = self.extract_and_predict(files[0], config, method != 'clustering')
-                emb_dim = np.asarray(sample_emb[0]).shape[-1]
-                for i in range(emb_dim):
-                    col = f'emb{i+1:04d}'
-                    if col not in df_labels.columns:
-                        df_labels[col] = np.nan
-                if method != 'clustering':
-                    if 'prediction' not in df_labels.columns:
-                        df_labels['prediction'] = ""
-                    if 'confidence' not in df_labels.columns:
-                        df_labels['confidence'] = np.nan
+            sample_emb = self.extract_and_predict(files[0], config, method != 'clustering')
+            emb_dim = sample_emb[0].shape[-1]
+            for i in range(emb_dim):
+                col = f'emb{i+1:04d}'
+                if col not in df_labels.columns:
+                    df_labels[col] = np.nan
+            if method != 'clustering':
+                if 'prediction' not in df_labels.columns:
+                    df_labels['prediction'] = ""
+                if 'confidence' not in df_labels.columns:
+                    df_labels['confidence'] = np.nan
 
             ###########################################################################
             ### Parallelize embedding extraction and prediction over df_labels rows ###
@@ -242,13 +246,13 @@ class XCNet(XenoCanto):
             
             with ProcessPoolExecutor(max_workers=cfg.CPU_THREADS) as executor:
                 extract_futures = {
-                    executor.submit(self.extract_and_predict, f, config, method != 'clustering'): 
-                    idx for idx, f in enumerate(files)
+                    executor.submit(self.extract_and_predict, files[idx], config, method != 'clustering'): 
+                    idx for idx in range(len(files))
                 }
 
                 with tqdm.tqdm(
                     total=len(extract_futures),
-                    desc=f"Extracting embeddings from BirdNET" if self.verbose else None,
+                    desc=f"Extracting embeddings from ROIs" if self.verbose else None,
                     unit="f"
                 ) as progress_bar:
                     for future in as_completed(extract_futures):
@@ -283,7 +287,7 @@ class XCNet(XenoCanto):
                 else:
                     # Keep data labeled as noise and signal
                     df_labels = df_labels[df_labels['pseudo_label'].notna()]
-                    
+       
             # Label data with minimum confidence value
             elif method == 'classification':
                 df_labels = df_labels[df_labels['confidence'] > min_confidence]
@@ -299,8 +303,8 @@ class XCNet(XenoCanto):
             df_labeling = pd.concat([df_labeling, df_labels], ignore_index=True)
 
         # Keep only categories of interest
-        self.df = df_labeling[df_labeling.categories.isin(unique_categories)]            
-        
+        self.df = df_labeling[df_labeling.categories.isin(unique_categories)]  
+
         # If there is only one category we can analyze the repertoire of the species
         if keep.upper() == 'ALL' and len(categories) == 1:
             # Add the cluster number to the categories to differentiate them
@@ -308,6 +312,48 @@ class XCNet(XenoCanto):
             
         # Rearrange index to be sure to have unique and increasing index
         self.df.reset_index(drop=True, inplace=True)
+        
+        
+        
+        
+        
+        
+        
+        # import matplotlib.pyplot as plt
+        # import umap
+        # import hdbscan
+
+        # X = self.df.loc[:, self.df.columns.str.startswith("emb")].to_numpy()
+
+        # df_test = pd.read_csv('results/labels.csv', sep=';')
+        # test_points = df_test.loc[:, df_test.columns.str.startswith("emb")].to_numpy()
+        # # Remove or impute NaN values before prediction
+        # test_points = np.nan_to_num(test_points)
+        
+        # clusterer = hdbscan.HDBSCAN(min_cluster_size=3, prediction_data=True).fit(X)
+        # test_labels, _ = hdbscan.approximate_predict(clusterer, test_points)
+        # print(test_labels)
+            
+        # reducer = umap.UMAP(n_components=2, random_state=cfg.RANDOM_SEED, metric=cfg.METRIC)
+        # y = pd.factorize(self.df.prediction)[0] # Convert labels to numeric values
+        # X_2d = reducer.fit_transform(X, y=y)
+        # test_points_2d = reducer.transform(test_points)
+
+        # # Plot embeddings
+        # plt.figure(figsize=(8, 6))
+        # scatter = plt.scatter(X_2d[:, 0], X_2d[:, 1], c=clusterer.labels_[clusterer.labels_ >= 0], cmap='Set1', alpha=0.6, label='Train')
+        # plt.scatter(test_points_2d[:, 0], test_points_2d[:, 1], c=test_labels, cmap='Set2', marker='x', s=80, label='Test')
+        # plt.legend()
+        # plt.title("Embeddings and Test Points")
+        # plt.xlabel("PC1")
+        # plt.ylabel("PC2")
+        # plt.show()
+        
+        
+        
+        
+        
+        
 
         # Add embeddings and labels to the class instance
         self.embeddings = self.df.loc[:, self.df.columns.str.startswith("emb")].to_numpy()
@@ -382,21 +428,21 @@ class XCNet(XenoCanto):
 
         Returns:
             embeddings: List of feature embeddings extracted from the audio file.
-            timestamps: List of timestamps corresponding to the audio segments.
-            file_paths: List of file paths for the audio segments.
-            predictions: List of predicted labels (if predict is True).
-            confidences: List of confidence scores for the predictions (if predict is True).
+            predictions: Predicted label (if predict is True).
+            confidences: Confidence score for the prediction (if predict is True).
         """
 
+        import operator
         # Set configuration parameters
         cfg.set_config(config)
         
         # Extract embeddings
-        y = np.expand_dims(y, axis=0)          
+        y = np.expand_dims(y, axis=0)
         embeddings = model.embeddings(y)
 
         if predict:
-            import operator
+            predictions, confidences = None, None
+            
             # Predict labels
             p = model.predict(y)[0]
             # Logits or sigmoid activations?
@@ -496,25 +542,20 @@ if __name__ == "__main__":
     # # Create an instance of the XCNet network with the species of interest
     # xcnet = XCNet(save_path='data')
     # # Label unlabeled 'data' folder using density-based clustering and save all the labeled clusters with noise to cache
-    # xcnet.labeling(dataset='data', method='clustering', keep='all', csv_filename='labels.csv', save_cache='xcnet_data.npz')    
+    # xcnet.labeling(dataset='data', method='clustering', keep='all', csv_filename='labels.csv') #, save_cache='XCNet_Data.npz')    
     # # Train custom classifier model with labeled clusters and save to disk
-    # xcnet.train(load_cache='data/xcnet_data.npz', save_model='xcnet.tflite')
-    # xcnet.plot()
+    # xcnet.train(load_cache='data/XCNet_Data.npz', save_model='XCNet.tflite')
+    # xcnet.plot(dataset='data/labels.csv')
     
     # Create a new instance of the XCNet network with the model trained on the labeled clusters
-    xcnet = XCNet(save_path='results', custom_classifier='data/xcnet.tflite')
-    # # Request dataset of the species of interest in Xeno-Canto to see if we find it in the clusters
-    xcnet.species_xc, xcnet.num_files = ['Nyctibius grandis'], 30
-    # # Save the dataset to a CSV file
-    xcnet.dataset(csv_filename='xc_dataset.csv', download=True) ### DOWNLOAD=FALSE DOES NOT WORK FOR THE MOMENT
+    xcnet = XCNet(save_path='results')
+    # Request dataset of the species of interest in Xeno-Canto to see if we find it in the clusters
+    # xcnet.species_xc, xcnet.num_files = ['Nyctibius grandis'], 30
+    # Save the dataset to a CSV file
+    # xcnet.dataset(csv_filename='xc_dataset.csv', download=True) ### DOWNLOAD=FALSE DOES NOT WORK FOR THE MOMENT
     # Label species of interest with custom classifier to see if it is present in the labeled clusters
     xcnet.labeling(dataset='results/xc_dataset.csv', method='clustering', keep='biggest', csv_filename='labels.csv')
-
-    # # Label the dataset with the custom classifier
-    # import pandas as pd
-    # df = xcnet.df.drop_duplicates(subset='file', keep='first')
-    # xcnet.labeling(dataset=df, method='classification', min_confidence=0.7, csv_filename='classifier_labels.csv')
-    xcnet.plot()
+    # xcnet.plot(dataset='results/labels.csv')
 
     # # Plot the results
     # import pandas as pd
