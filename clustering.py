@@ -35,7 +35,7 @@ def cluster(df, config, verbose=False):
             print(f"Clustering '{df['categories'][0]}' species with {cfg.METHOD}: {len(df)} ROIs\n")
 
         # Prepare the embeddings of the categories
-        X = df.loc[:, df.columns.str.startswith("emb")].to_numpy() 
+        X = df.loc[:, df.columns.str.startswith("emb")].to_numpy()
 
         if cfg.MIN_PTS == 'auto':
             # Automatic estimation of the clustering algorithm parameters
@@ -82,6 +82,25 @@ def cluster(df, config, verbose=False):
             # Set pseudo_label of the biggest cluster to 1
             biggest_cluster_ID = df.loc[df["prediction"] >= 0]["prediction"].value_counts().idxmax()
             df.loc[df["prediction"] == biggest_cluster_ID, "pseudo_label"] = int(1)
+
+            # # Find the cluster (excluding noise and biggest) that is farthest from the biggest cluster
+            # # Compute centroids of each cluster (excluding noise)
+            # cluster_ids = df["prediction"].unique()
+            # cluster_ids = [cid for cid in cluster_ids if cid >= 0 and cid != biggest_cluster_ID]
+                
+            # # Get the centroid of the biggest cluster
+            # biggest_centroid = X[df["prediction"].values.flatten() == biggest_cluster_ID].mean(axis=0)
+            # max_dist = -1
+            # farthest_cluster_id = None
+            # for cid in cluster_ids:
+            #     cluster_centroid = X[df["prediction"].values.flatten() == cid].mean(axis=0)
+            #     dist = np.linalg.norm(biggest_centroid - cluster_centroid)
+            #     if dist > max_dist:
+            #         max_dist = dist
+            #         farthest_cluster_id = cid
+            # # Label the farthest cluster with -1 in pseudo_label to use it as non-event class
+            # if farthest_cluster_id is not None:
+            #     df.loc[df["prediction"] == farthest_cluster_id, "pseudo_label"] = int(-1)
 
         elif cfg.KEEP == 'ALL':                
             # Set pseudo_label of noise (cluster ID = -1) to 0 
@@ -139,7 +158,7 @@ def estimate_parameters(X, min_samples, metric='cosine'):
     else:
         eps = cfg.EPS
 
-    # Compute pairwise distance to avoid errors
+    # Compute pairwise distance to avoid errors with cosine metric
     # https://github.com/scikit-learn-contrib/hdbscan/issues/69
     from sklearn.metrics import pairwise_distances
     precomputed_distances = pairwise_distances(embedding, metric=metric)

@@ -170,11 +170,14 @@ def detect_rois(y, sr, n_fft=2048, hop_length=1024, morph_preset="medium", min_t
     return rois
 
 
-def split_audio(path, min_duration=cfg.SIG_MINLEN, max_duration=cfg.SIG_LENGTH, denoise=True):
+def split_audio(path, config, denoise=True, min_duration=cfg.SIG_MINLEN, max_duration=cfg.SIG_LENGTH):
     """
     Splits audio into segments based on detected ROIs, using parallel processing for speed.
     Returns a pandas DataFrame with segment metadata and audio.
     """
+    
+    # Set configuration parameters
+    cfg.set_config(config) 
     
     audio_segments, tasks = [], []
 
@@ -182,6 +185,21 @@ def split_audio(path, min_duration=cfg.SIG_MINLEN, max_duration=cfg.SIG_LENGTH, 
     y, sr = load_audio(path, denoise=denoise)
     # Detect ROIs
     rois = detect_rois(y, sr)
+
+    # Keep only ROIs within the biggest frequency range
+    if cfg.KEEP == 'BIGGEST':
+        # Compute the 10th and 90th percentiles of fmin and fmax
+        fmins = [r["bbox"][2] for r in rois if r["bbox"][2] is not None]
+        fmaxs = [r["bbox"][3] for r in rois if r["bbox"][3] is not None]
+        if fmins and fmaxs:
+            lower_fmin = np.percentile(fmins, 10)
+            upper_fmax = np.percentile(fmaxs, 90)
+            # Keep ROIs that overlap at least partially with the common frequency band
+            rois = [
+                r for r in rois
+                if r["bbox"][2] is not None and r["bbox"][3] is not None and
+                r["bbox"][3] >= lower_fmin and r["bbox"][2] <= upper_fmax
+            ]
 
     # Prepare segment extraction tasks
     for r in rois:

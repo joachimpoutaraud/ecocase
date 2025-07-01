@@ -62,6 +62,7 @@ class XCNet(XenoCanto):
                     os.makedirs(self.save_path)      
             else:      
                 os.makedirs(self.save_path)  
+                
 
     def labeling(self, dataset=None, method='clustering', keep=cfg.KEEP, noise=False, min_confidence=cfg.MIN_CONFIDENCE, csv_filename=None, save_cache=None):
         """ 
@@ -182,9 +183,12 @@ class XCNet(XenoCanto):
             ### Parallelize audio segmentation with split_audio function ###
             ################################################################
             
+            if method == 'clustering':
+                config['KEEP'] = keep.upper() 
+            
             with ProcessPoolExecutor(max_workers=cfg.CPU_THREADS) as executor:
                 split_futures = {
-                    executor.submit(split_audio, f, True): f for f in files
+                    executor.submit(split_audio, f, config, True): f for f in files
                 }
 
                 with tqdm.tqdm(
@@ -281,12 +285,14 @@ class XCNet(XenoCanto):
                 # Cluster the data
                 df_labels = cluster(df_labels, config, self.verbose)
 
-                if noise is False:
-                    # Keep only data labeled as signal (i.e. not noise)
-                    df_labels = df_labels[df_labels['pseudo_label'] == 1]
-                else:
+                if noise:
                     # Keep data labeled as noise and signal
                     df_labels = df_labels[df_labels['pseudo_label'].notna()]
+                    df_labels.loc[df_labels["pseudo_label"] == 0, "categories"] = "Noise"
+                    # df_labels.loc[df_labels["pseudo_label"] == -1, "categories"] = "Other"
+                else:
+                    # Keep only data labeled as signal (i.e. not noise)
+                    df_labels = df_labels[df_labels['pseudo_label'] == 1]
        
             # Label data with minimum confidence value
             elif method == 'classification':
@@ -301,59 +307,24 @@ class XCNet(XenoCanto):
                 
             # Concatenate dataFrames
             df_labeling = pd.concat([df_labeling, df_labels], ignore_index=True)
-
+        
         # Keep only categories of interest
-        self.df = df_labeling[df_labeling.categories.isin(unique_categories)]  
+        if noise:
+            # Add "Noise" to the list of unique categories
+            unique_categories_with_noise = list(unique_categories)
+            unique_categories_with_noise.append("Noise")
+            # unique_categories_with_noise.append("Other")
+            self.df = df_labeling[df_labeling.categories.isin(unique_categories_with_noise)] 
+        else:
+            self.df = df_labeling[df_labeling.categories.isin(unique_categories)]  
 
         # If there is only one category we can analyze the repertoire of the species
-        if keep.upper() == 'ALL' and len(categories) == 1:
+        if keep.upper() == 'ALL' and len(categories) == 1 and categories[0] != "Unlabeled":
             # Add the cluster number to the categories to differentiate them
             self.df.categories = self.df.apply(lambda row: f"{row['categories']}_{row['prediction']}", axis=1) 
             
         # Rearrange index to be sure to have unique and increasing index
         self.df.reset_index(drop=True, inplace=True)
-        
-        
-        
-        
-        
-        
-        
-        # import matplotlib.pyplot as plt
-        # import umap
-        # import hdbscan
-
-        # X = self.df.loc[:, self.df.columns.str.startswith("emb")].to_numpy()
-
-        # df_test = pd.read_csv('results/labels.csv', sep=';')
-        # test_points = df_test.loc[:, df_test.columns.str.startswith("emb")].to_numpy()
-        # # Remove or impute NaN values before prediction
-        # test_points = np.nan_to_num(test_points)
-        
-        # clusterer = hdbscan.HDBSCAN(min_cluster_size=3, prediction_data=True).fit(X)
-        # test_labels, _ = hdbscan.approximate_predict(clusterer, test_points)
-        # print(test_labels)
-            
-        # reducer = umap.UMAP(n_components=2, random_state=cfg.RANDOM_SEED, metric=cfg.METRIC)
-        # y = pd.factorize(self.df.prediction)[0] # Convert labels to numeric values
-        # X_2d = reducer.fit_transform(X, y=y)
-        # test_points_2d = reducer.transform(test_points)
-
-        # # Plot embeddings
-        # plt.figure(figsize=(8, 6))
-        # scatter = plt.scatter(X_2d[:, 0], X_2d[:, 1], c=clusterer.labels_[clusterer.labels_ >= 0], cmap='Set1', alpha=0.6, label='Train')
-        # plt.scatter(test_points_2d[:, 0], test_points_2d[:, 1], c=test_labels, cmap='Set2', marker='x', s=80, label='Test')
-        # plt.legend()
-        # plt.title("Embeddings and Test Points")
-        # plt.xlabel("PC1")
-        # plt.ylabel("PC2")
-        # plt.show()
-        
-        
-        
-        
-        
-        
 
         # Add embeddings and labels to the class instance
         self.embeddings = self.df.loc[:, self.df.columns.str.startswith("emb")].to_numpy()
@@ -544,7 +515,7 @@ if __name__ == "__main__":
     # # Label unlabeled 'data' folder using density-based clustering and save all the labeled clusters with noise to cache
     # xcnet.labeling(dataset='data', method='clustering', keep='all', csv_filename='labels.csv') #, save_cache='XCNet_Data.npz')    
     # # Train custom classifier model with labeled clusters and save to disk
-    # xcnet.train(load_cache='data/XCNet_Data.npz', save_model='XCNet.tflite')
+    # # xcnet.train(load_cache='data/XCNet_Data.npz', save_model='XCNet.tflite')
     # xcnet.plot(dataset='data/labels.csv')
     
     # Create a new instance of the XCNet network with the model trained on the labeled clusters
@@ -554,14 +525,17 @@ if __name__ == "__main__":
     # Save the dataset to a CSV file
     # xcnet.dataset(csv_filename='xc_dataset.csv', download=True) ### DOWNLOAD=FALSE DOES NOT WORK FOR THE MOMENT
     # Label species of interest with custom classifier to see if it is present in the labeled clusters
-    xcnet.labeling(dataset='results/xc_dataset.csv', method='clustering', keep='biggest', csv_filename='labels.csv')
+    xcnet.labeling(dataset='results/xc_dataset.csv', method='clustering', keep='biggest', noise=True, csv_filename='labels.csv')
     # xcnet.plot(dataset='results/labels.csv')
-
-    # # Plot the results
+    
+    
+    
     # import pandas as pd
-    # df = pd.read_csv('data/labels.csv', sep=';')
-    # # df = df[df['prediction'] == 1]  # Get the cluster with the species of interest
-    # xcnet.plot()
+    # df = pd.read_csv('results/labels.csv', sep=';')
+    # df = df[df['pseudo_label'] == 1]
+    # xcnet.plot(dataset=df)
+
+
 
 
 
