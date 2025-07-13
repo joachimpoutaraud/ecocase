@@ -188,7 +188,7 @@ class XCNet(XenoCanto):
             
             with ProcessPoolExecutor(max_workers=cfg.CPU_THREADS) as executor:
                 split_futures = {
-                    executor.submit(split_audio, f, config, True): f for f in files
+                    executor.submit(split_audio, f, config): f for f in files
                 }
 
                 with tqdm.tqdm(
@@ -289,7 +289,6 @@ class XCNet(XenoCanto):
                     # Keep data labeled as noise and signal
                     df_labels = df_labels[df_labels['pseudo_label'].notna()]
                     df_labels.loc[df_labels["pseudo_label"] == 0, "categories"] = "Noise"
-                    # df_labels.loc[df_labels["pseudo_label"] == -1, "categories"] = "Other"
                 else:
                     # Keep only data labeled as signal (i.e. not noise)
                     df_labels = df_labels[df_labels['pseudo_label'] == 1]
@@ -298,9 +297,16 @@ class XCNet(XenoCanto):
             elif method == 'classification':
                 df_labels = df_labels[df_labels['confidence'] > min_confidence]
                 if keep.upper() == 'BIGGEST':
-                    # Keep only the biggest cluster (most common prediction label)
-                    biggest_prediction = df_labels["prediction"].value_counts().idxmax()
-                    df_labels = df_labels[df_labels["prediction"] == biggest_prediction]
+                    # Keep only the biggest group of predicted labels
+                    try:
+                        # biggest_prediction_ID = df_labels["prediction"].value_counts().idxmax()
+                        df_labels = df_labels[df_labels["prediction"] == 'Hydropsalis cayennensis_White-tailed Nightjar']
+                        # if self.verbose:
+                        #     print(f'Number of ROIs found in the biggest group of predicted labels: {len(df_labels[df_labels["prediction"] == biggest_prediction_ID])}')
+                    except:
+                        if self.verbose:
+                            print('No detection was found. Try lowering the confidence level.')
+                        continue
                 
             else:
                 raise ValueError("Method must be either 'clustering' or 'classification'.")
@@ -410,6 +416,12 @@ class XCNet(XenoCanto):
         # Extract embeddings
         y = np.expand_dims(y, axis=0)
         embeddings = model.embeddings(y)
+        
+        # import librosa
+        # mfcc = librosa.feature.mfcc(y=y, n_mfcc=13, n_mels=24, htk=True, n_fft=2048, hop_length=512)
+        # mfcc = mfcc[1:]
+        # embeddings = mfcc.mean(axis=1)
+        # embeddings = np.expand_dims(embeddings, axis=0)
 
         if predict:
             predictions, confidences = None, None
@@ -514,29 +526,42 @@ if __name__ == "__main__":
     # xcnet = XCNet(save_path='data')
     # # Label unlabeled 'data' folder using density-based clustering and save all the labeled clusters with noise to cache
     # xcnet.labeling(dataset='data', method='clustering', keep='all', csv_filename='labels.csv') #, save_cache='XCNet_Data.npz')    
-    # # Train custom classifier model with labeled clusters and save to disk
+    # # # Train custom classifier model with labeled clusters and save to disk
     # # xcnet.train(load_cache='data/XCNet_Data.npz', save_model='XCNet.tflite')
     # xcnet.plot(dataset='data/labels.csv')
     
-    # Create a new instance of the XCNet network with the model trained on the labeled clusters
-    xcnet = XCNet(save_path='results')
-    # Request dataset of the species of interest in Xeno-Canto to see if we find it in the clusters
-    # xcnet.species_xc, xcnet.num_files = ['Nyctibius grandis'], 30
-    # Save the dataset to a CSV file
-    # xcnet.dataset(csv_filename='xc_dataset.csv', download=True) ### DOWNLOAD=FALSE DOES NOT WORK FOR THE MOMENT
-    # Label species of interest with custom classifier to see if it is present in the labeled clusters
-    xcnet.labeling(dataset='results/xc_dataset.csv', method='clustering', keep='biggest', noise=True, csv_filename='labels.csv')
+    # # Create a new instance of the XCNet network with the model trained on the labeled clusters
+    # xcnet = XCNet(save_path='results')
+    # # Request dataset of the species of interest in Xeno-Canto to see if we find it in the clusters
+    # # xcnet.species_xc, xcnet.num_files = ['Nyctibius grandis'], 30
+    # # Save the dataset to a CSV file
+    # # xcnet.dataset(csv_filename='xc_dataset.csv', download=True) ### DOWNLOAD=FALSE DOES NOT WORK AT THE MOMENT
+    # # Label species of interest with custom classifier to see if it is present in the labeled clusters
+    # xcnet.labeling(dataset='results', method='classification', keep='biggest', csv_filename='labels.csv')
     # xcnet.plot(dataset='results/labels.csv')
     
     
+    import pandas as pd
+    df = pd.read_csv('results/labels.csv', sep=';')
     
+    from birdnet_analyzer.analyze.utils import analyze_file
+    from birdnet_analyzer import config as cfg
+    
+    config = cfg.get_config()
+    
+    for file_path in df['file']:
+        x = (file_path, config)
+        res = analyze_file(x)
+        print(res)
+    
+    
+    # df = df[df.categories == 'Nyctidromus_albicollis']
+    # xcnet.plot(dataset=df)
+        
     # import pandas as pd
     # df = pd.read_csv('results/labels.csv', sep=';')
     # df = df[df['pseudo_label'] == 1]
     # xcnet.plot(dataset=df)
-
-
-
 
 
 

@@ -28,7 +28,8 @@ def create_thumbnails(row, save_path, encode=False):
     import soundfile as sf
     import os
 
-    y, sr = load_audio(path=row.file, sr=16000, offset=row.start, duration=row.end - row.start, fmin=row.fmin, fmax=row.fmax, denoise=False)
+    # TODO update spectrogram with FFmpeg and add option only audio or image
+    y, sr = load_audio(path=row.file, sr=16000, offset=row.start, duration=row.end-row.start, fmin=row.fmin, fmax=row.fmax, denoise=False, noise_profile=None)
 
     S = librosa.feature.melspectrogram(y=y, sr=sr)
     S_db = librosa.power_to_db(S, ref=np.max)
@@ -88,11 +89,14 @@ def interactive_display(df, thumbnails=True, encode=False, frame_width=1000, fra
     X = np.nan_to_num(X)
 
     # Get the labels
-    labels = df['prediction']
+    if len(df.categories.unique()) > 2:
+        labels = df.categories
+    else:
+        labels = df.prediction
 
     if X.shape[1] > 2:
         # Fit the UMAP model and transform the data
-        reducer = umap.UMAP(n_components=2, random_state=cfg.RANDOM_SEED)
+        reducer = umap.UMAP(n_components=2, metric=cfg.METRIC, random_state=cfg.RANDOM_SEED)
         y = pd.factorize(labels)[0] # Convert labels to numeric values
         X = reducer.fit_transform(X, y=y)
 

@@ -11,32 +11,34 @@ from birdnet_analyzer import config as cfg
 
 
 def load_audio(path, sr=cfg.SAMPLE_RATE, fmin=cfg.BANDPASS_FMIN, fmax=cfg.BANDPASS_FMAX, offset=0.0, duration=None, 
-               dynaudnorm=True, denoise=True, noise_profile=[0.0,1.0], noise_floor=-20, order=3, output_filename=None, max_retries=5):
-    
+               dynaudnorm=True, denoise=True, noise_profile=[0.0,1.0], noise_floor=-30, order=3, output_filename=None, max_retries=5):
+        
     # Build FFmpeg command
     cmd = ["ffmpeg", "-y", "-hide_banner", "-ss", str(offset), "-i", str(path)] 
     # Build filter chain for FFmpeg
     filters = []
 
+    # Use bandpass filter to keep only frequencies between fmin and fmax
+    if fmin is not None and fmax is not None:        
+        filters.append(f"firequalizer=gain='if(lt(f,{fmin}),-INF,if(gt(f,{fmax}),-INF,0))'")
+        # filters.append(f"bandpass=f={((fmin + fmax) / 2):.1f}:width_type=h:w={(fmax - fmin):.1f}")
+        # filters.append(f"highpass=f={fmin:.1f}")
+        # filters.append(f"lowpass=f={fmax:.1f}")
+
     if dynaudnorm:
-        # Dynamic audio normalization with alternative boundary mode 
-        # to get a smooth "fade in" and "fade out" at the beginning and at the end of the audio input
         filters.append("dynaudnorm=b=enabled")
 
-    if fmin is not None:
-        filters.append(f"highpass=f={fmin:.1f}")
-    if fmax is not None:
-        filters.append(f"lowpass=f={fmax:.1f}")
-
     if denoise:
-        if noise_profile == None:
+        if noise_profile is None:
             filters += [*[f"afftdn=nf={noise_floor}:tr=1" for _ in range(order)]]
         else:
             filters += [
                 f"asendcmd={noise_profile[0]} afftdn sn start",
                 f"asendcmd={noise_profile[1]} afftdn sn stop",
-                *[f"afftdn=nf={noise_floor}:tr=1" for _ in range(order)]
+                *[f"afftdn=nf={noise_floor}:tr=1" for _ in range(order)],
+                # f"afwtdn=sigma=1:wavet='bl3':percent=100:levels=12:profile=1:adaptive=1"
             ]
+    # Join filter chain with commas
     af = ",".join(filters)
     
     if af:
@@ -59,9 +61,9 @@ def load_audio(path, sr=cfg.SAMPLE_RATE, fmin=cfg.BANDPASS_FMIN, fmax=cfg.BANDPA
         return None
 
     # Load audio into memory with retries
-    cmd += ["-f", "f32le", "-ar", str(sr), "-ac", "1", "-"]
     for attempt in range(max_retries):
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        cmd_mem = cmd + ["-f", "f32le", "-ar", str(sr), "-ac", "1", "-"]
+        proc = subprocess.Popen(cmd_mem, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         out, _ = proc.communicate()
         y = np.frombuffer(out, dtype='float32')
         if y.size > 0:
@@ -73,7 +75,7 @@ def load_audio(path, sr=cfg.SAMPLE_RATE, fmin=cfg.BANDPASS_FMIN, fmax=cfg.BANDPA
     return np.array(y, dtype='float32'), sr
 
 
-def detect_rois(y, sr, n_fft=2048, hop_length=1024, morph_preset="medium", min_time_px=20, min_freq_px=20, plot=False):
+def detect_rois(y, sr, fmin=cfg.BANDPASS_FMIN, fmax=cfg.BANDPASS_FMAX, n_fft=2048, hop_length=512, morph_preset="medium", min_time_px=20, min_freq_px=20, plot=False):
     """
     Detects ROIs and returns their time and frequency bounds.
     Returns a list of dicts with bbox, t_start, t_end, fmin, fmax.
@@ -87,11 +89,28 @@ def detect_rois(y, sr, n_fft=2048, hop_length=1024, morph_preset="medium", min_t
     # Use log-frequency bins (vectorized interpolation)
     n_bins, n_frames = S_db.shape
     freqs = librosa.fft_frequencies(sr=sr, n_fft=n_fft)
-    log_freqs = np.geomspace(freqs[1], freqs[-1], num=n_bins)  # avoid 0 Hz
+    # Filter spectrogram
+    freq_mask = (freqs >= fmin) & (freqs <= fmax)
+    S_db_filtered = S_db[freq_mask, :]
+    filtered_freqs = freqs[freq_mask]
+
+    # Use log-frequency bins within filtered range
+    n_bins, n_frames = S_db_filtered.shape
+    log_freqs = np.geomspace(filtered_freqs[0], filtered_freqs[-1], num=n_bins)
+    
     # Interpolate S_db onto log-frequency bins
     S_db_log = np.empty((n_bins, n_frames), dtype=np.float32)
     for t in range(n_frames):
         S_db_log[:, t] = np.interp(log_freqs, freqs, S_db[:, t])
+        
+    # # Use log-frequency bins (vectorized interpolation)
+    # n_bins, n_frames = S_db.shape
+    # freqs = librosa.fft_frequencies(sr=sr, n_fft=n_fft)
+    # log_freqs = np.geomspace(freqs[1], freqs[-1], num=n_bins)  # avoid 0 Hz
+    # # Interpolate S_db onto log-frequency bins
+    # S_db_log = np.empty((n_bins, n_frames), dtype=np.float32)
+    # for t in range(n_frames):
+    #     S_db_log[:, t] = np.interp(log_freqs, freqs, S_db[:, t])
 
     # Normalize and threshold with
     spectrogram_img = cv2.normalize(S_db_log, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
@@ -111,9 +130,12 @@ def detect_rois(y, sr, n_fft=2048, hop_length=1024, morph_preset="medium", min_t
 
     # Find contours
     contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    # Group ROIs (avoid nested loops for speed)
+    # Group bboxes (avoid nested loops for speed)
     bboxes = [cv2.boundingRect(cnt) for cnt in contours]
     bboxes = [b for b in bboxes if b[2] >= min_time_px and b[3] >= min_freq_px]
+    # Remove bboxes that are suspiously large
+    image_h, image_w = spectrogram_img.shape
+    bboxes = [b for b in bboxes if b[2] < image_w * 0.99 and b[3] < image_h * 0.99]
 
     # Merge overlapping/close bboxes (vectorized, fast)
     rois = []
@@ -136,7 +158,6 @@ def detect_rois(y, sr, n_fft=2048, hop_length=1024, morph_preset="medium", min_t
         if not merged:
             rois.append({"bbox": (x, y, w, h)})
 
-    # Plot if requested
     if plot:
         import matplotlib.pyplot as plt
         plt.figure(figsize=(12, 6))
@@ -163,11 +184,96 @@ def detect_rois(y, sr, n_fft=2048, hop_length=1024, morph_preset="medium", min_t
         x, y, w, h = r["bbox"]
         tstart = x * (hop_length / sr)
         tend = (x + w) * (hop_length / sr)
-        fmin = round(log_freqs[y], 3) if y < len(log_freqs) else None
-        fmax = round(log_freqs[y + h], 3) if (y + h) < len(log_freqs) else None
-        r["bbox"] = (tstart, tend, fmin, fmax)
+        f_min = round(log_freqs[y], 3) if y < len(log_freqs) else fmin
+        f_max = round(log_freqs[y + h], 3) if (y + h) < len(log_freqs) else fmax
+        r["bbox"] = (tstart, tend, f_min, f_max)
 
     return rois
+
+# def split_audio(path, config, denoise=True, min_duration=cfg.SIG_MINLEN, max_duration=cfg.SIG_LENGTH):
+#     """
+#     Splits audio into segments based on detected ROIs.
+#     Applies bandpass filter to each segment and uses parallel processing.
+#     Returns a pandas DataFrame with segment metadata and filtered audio.
+#     """
+    
+#     # Set configuration parameters
+#     cfg.set_config(config)
+
+#     # Load full audio once
+#     y, sr = load_audio(path, denoise=denoise)
+
+#     # Detect ROIs
+#     rois = detect_rois(y, sr)
+
+#     if cfg.KEEP == 'BIGGEST':
+#         fmins = [r["bbox"][2] for r in rois if r["bbox"][2] is not None]
+#         fmaxs = [r["bbox"][3] for r in rois if r["bbox"][3] is not None]
+#         if fmins and fmaxs:
+#             lower_fmin = np.percentile(fmins, 10)
+#             upper_fmax = np.percentile(fmaxs, 90)
+#             rois = [
+#                 r for r in rois
+#                 if r["bbox"][2] is not None and r["bbox"][3] is not None and
+#                    r["bbox"][3] >= lower_fmin and r["bbox"][2] <= upper_fmax
+#             ]
+
+#     tasks = []
+#     for r in rois:
+#         tstart, tend, fmin, fmax = r["bbox"]
+#         dur = tend - tstart
+#         if dur < min_duration:
+#             continue
+
+#         segments = int(np.ceil(dur / max_duration))
+#         for i in range(segments):
+#             seg_start = round(tstart + i * max_duration, 3)
+#             seg_dur = min(max_duration, dur - i * max_duration)
+#             if seg_dur < min_duration:
+#                 continue
+#             duration = max_duration if seg_dur >= max_duration else seg_dur
+#             tasks.append({
+#                 "start": seg_start,
+#                 "end": seg_start + duration,
+#                 "fmin": fmin,
+#                 "fmax": fmax
+#             })
+
+#     from scipy.signal import lfilter, firwin
+#     def fir_bandpass_filter(signal, sr, fmin, fmax, numtaps=1024):
+#         taps = firwin(numtaps, [fmin, fmax], pass_zero=False, fs=sr)
+#         return lfilter(taps, 1.0, signal)
+    
+#     # from scipy.signal import butter, sosfilt
+#     # def butter_bandpass_sosfilter(signal, sr, fmin, fmax, order=3):
+#     #     nyquist = 0.5 * sr
+#     #     low = fmin / nyquist
+#     #     high = fmax / nyquist
+#     #     sos = butter(order, [low, high], btype='band', output='sos')
+#     #     return sosfilt(sos, signal)
+
+#     def extract_segment_from_loaded_audio(task, y, sr):
+#         start_sample = int(task["start"] * sr)
+#         end_sample = int(task["end"] * sr)
+#         segment = y[start_sample:end_sample]
+
+#         expected_len = int(sr * max_duration)
+#         if len(segment) < expected_len:
+#             segment = np.pad(segment, (0, expected_len - len(segment)), mode='constant')
+#         # Filter loaded audio with FIR bandpass filter
+#         filtered_segment = fir_bandpass_filter(segment, sr, task["fmin"], task["fmax"])
+
+#         task["rois"] = filtered_segment
+#         return task
+
+#     audio_segments = []
+#     if len(tasks) > 1:
+#         with ThreadPoolExecutor(max_workers=cfg.CPU_THREADS) as executor:
+#             results = list(executor.map(lambda task: extract_segment_from_loaded_audio(task, y, sr), tasks))
+#         audio_segments.extend(results)
+
+#     df = pd.DataFrame(audio_segments)
+#     return df
 
 
 def split_audio(path, config, denoise=True, min_duration=cfg.SIG_MINLEN, max_duration=cfg.SIG_LENGTH):
@@ -178,28 +284,12 @@ def split_audio(path, config, denoise=True, min_duration=cfg.SIG_MINLEN, max_dur
     
     # Set configuration parameters
     cfg.set_config(config) 
-    
     audio_segments, tasks = [], []
 
     # Load audio once
     y, sr = load_audio(path, denoise=denoise)
     # Detect ROIs
     rois = detect_rois(y, sr)
-
-    # Keep only ROIs within the biggest frequency range
-    if cfg.KEEP == 'BIGGEST':
-        # Compute the 10th and 90th percentiles of fmin and fmax
-        fmins = [r["bbox"][2] for r in rois if r["bbox"][2] is not None]
-        fmaxs = [r["bbox"][3] for r in rois if r["bbox"][3] is not None]
-        if fmins and fmaxs:
-            lower_fmin = np.percentile(fmins, 10)
-            upper_fmax = np.percentile(fmaxs, 90)
-            # Keep ROIs that overlap at least partially with the common frequency band
-            rois = [
-                r for r in rois
-                if r["bbox"][2] is not None and r["bbox"][3] is not None and
-                r["bbox"][3] >= lower_fmin and r["bbox"][2] <= upper_fmax
-            ]
 
     # Prepare segment extraction tasks
     for r in rois:
@@ -208,16 +298,18 @@ def split_audio(path, config, denoise=True, min_duration=cfg.SIG_MINLEN, max_dur
         # Skip segments shorter than min_duration
         dur = tend - tstart
         if dur < min_duration:
-            continue
+            continue        
         
         # Split segment into max_duration chunks, pad last if needed
         segments = int(np.ceil(dur / max_duration))
         for i in range(segments):
             seg_start = round(tstart + i * max_duration, 3)
             seg_dur = min(max_duration, dur - i * max_duration)
+            
             # Skip segments shorter than min_duration
             if seg_dur < min_duration:
                 continue
+            
             # For the last segment, set duration to seg_dur, else max_duration
             duration = max_duration if seg_dur >= max_duration else seg_dur
             tasks.append({
@@ -233,9 +325,9 @@ def split_audio(path, config, denoise=True, min_duration=cfg.SIG_MINLEN, max_dur
                     "fmax": fmax,
                     "offset": seg_start,
                     "duration": duration,
-                    "dynaudnorm": True,
-                    "denoise": denoise,
-                    "noise_profile": None,
+                    "denoise": False,
+                    # # Use white noise as profile to preserve ROI information
+                    # "noise_profile": None,
                 }
             })
                          
@@ -258,11 +350,3 @@ def split_audio(path, config, denoise=True, min_duration=cfg.SIG_MINLEN, max_dur
     # Convert to DataFrame
     df = pd.DataFrame(audio_segments)
     return df
-                
-
-# path = "test_data/SMA04635_20220318_182700.wav"  
-# # Detect regions of interest (ROIs)
-# rois = detect_rois(path, morph_preset='medium', plot=True)
-# # Split audio with ROIs
-# sig_splits = split_audio(path, rois, csv_filename="rois.csv", output_folder="rois", download=True)
-# print(sig_splits)

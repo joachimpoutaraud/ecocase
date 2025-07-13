@@ -72,13 +72,13 @@ def cluster(df, config, verbose=False):
             dbcv, cluster, eps, min_samples = estimate_parameters(X, min_samples, cfg.METRIC)
 
         # Add the label found with the clustering
-        df["prediction"] = cluster.labels_.reshape(-1, 1)
+        df["prediction"] = cluster.labels_
+        # Set pseudo_label of noise (cluster ID = -1) to 0
+        df.loc[df["prediction"] < 0, "pseudo_label"] = int(0)
 
         # Add the automatic label (SIGNAL = 1 or NOISE = 0) into the pseudo_label's column of the dataframe
         # Test if we want to consider only the biggest or all clusters that are not noise (-1) to be signal
         if cfg.KEEP == 'BIGGEST':
-            # Set pseudo_label of noise (cluster ID = -1) to 0 
-            df.loc[df["prediction"] < 0, "pseudo_label"] = int(0)
             # Set pseudo_label of the biggest cluster to 1
             biggest_cluster_ID = df.loc[df["prediction"] >= 0]["prediction"].value_counts().idxmax()
             df.loc[df["prediction"] == biggest_cluster_ID, "pseudo_label"] = int(1)
@@ -101,10 +101,34 @@ def cluster(df, config, verbose=False):
             # # Label the farthest cluster with -1 in pseudo_label to use it as non-event class
             # if farthest_cluster_id is not None:
             #     df.loc[df["prediction"] == farthest_cluster_id, "pseudo_label"] = int(-1)
+            
+        # if cfg.KEEP == 'BEST':
+        #     # Get valid cluster labels
+        #     valid_clusters = df.loc[df["prediction"] >= 0]["prediction"].unique()
+        #     # Define a scoring function: size × persistence
+        #     cluster_scores = {}
+        #     for cluster_id in valid_clusters:
+        #         cluster_size = (df["prediction"] == cluster_id).sum()
+        #         cluster_persistence = cluster.cluster_persistence_[cluster_id]
+        #         cluster_scores[cluster_id] = cluster_size * cluster_persistence
+
+        #     # Find the top-scoring cluster
+        #     best_cluster_id = max(cluster_scores, key=cluster_scores.get)
+        #     # Set pseudo_labels
+        #     df.loc[df["prediction"] == best_cluster_id, "pseudo_label"] = int(1)
+            
+        # if cfg.KEEP == 'PERSISTENT':
+        #     # Get valid cluster labels (exclude noise -1)
+        #     valid_labels = np.unique(cluster.labels_)
+        #     valid_labels = valid_labels[valid_labels >= 0]
+        #     # Get persistence scores for those labels
+        #     persistence_dict = {label: persistence for label, persistence in zip(valid_labels, cluster.cluster_persistence_)}
+        #     # Find cluster ID with highest persistence
+        #     persistent_cluster_ID = max(persistence_dict, key=persistence_dict.get)
+        #     # Set the most persistent cluster as signal
+        #     df.loc[df["prediction"] == persistent_cluster_ID, "pseudo_label"] = int(1)
 
         elif cfg.KEEP == 'ALL':                
-            # Set pseudo_label of noise (cluster ID = -1) to 0 
-            df.loc[df["prediction"] < 0, "pseudo_label"] = int(0)
             # Set pseudo_label of signal (cluster ID >= 0) to 1 
             df.loc[df["prediction"] >= 0, "pseudo_label"] = int(1)
 
