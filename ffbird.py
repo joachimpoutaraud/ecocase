@@ -14,15 +14,6 @@ class FFbird:
         self.fps = fps
         self.df = None
 
-    def get_audio_duration(self, audio_path):
-        cmd = [
-            "ffprobe", "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1", audio_path
-        ]
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        return float(result.stdout.strip())
-
     def build_ffmpeg_command(
         self, audio_path, start, duration, fmin, fmax,
         output_path=None, mode='audio', output_mode='disk',
@@ -62,15 +53,15 @@ class FFbird:
 
         else:
             raise ValueError("Invalid mode or output_mode")
-
-    def get_scaleogram(self, audio_path, fmin, fmax):
-        duration = self.get_audio_duration(audio_path)
-        cmd = self.build_ffmpeg_command(
-            audio_path, start=0, duration=duration,
-            fmin=fmin, fmax=fmax, mode="image", output_mode="pipe"
-        )
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, check=True)
-        return cv2.imdecode(np.frombuffer(result.stdout, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+        
+    def get_audio_duration(self, audio_path):
+        cmd = [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", audio_path
+        ]
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        return float(result.stdout.strip())
 
     def convert_pix_to_logfreq(self, y, height):
         log_f_min, log_f_max = np.log10(self.fmin), np.log10(self.fmax)
@@ -105,17 +96,26 @@ class FFbird:
         for roi in rois_bounds:
             x, y, w, h = roi["bbox"]
             duration = w / self.fps
-            if min_duration <= duration <= max_duration:
+            if duration >= min_duration and (max_duration is None or duration <= max_duration):
                 start, end = x / self.fps, (x + w) / self.fps
                 roi_fmin = self.convert_pix_to_logfreq(y + h, height)
                 roi_fmax = self.convert_pix_to_logfreq(y, height)
                 rois.append((roi_fmin, roi_fmax, start, end))
+
         return rois
 
-    def _process_single_file(self, args):
+    def _process_roi(self, args):
         audio_path, min_duration, max_duration = args
         try:
-            image = self.get_scaleogram(audio_path, fmin=self.fmin, fmax=self.fmax)
+
+            duration = self.get_audio_duration(audio_path)
+            ffmpeg_command = self.build_ffmpeg_command(
+                audio_path, start=0, duration=duration,
+                fmin=self.fmin, fmax=self.fmax, mode="image", output_mode="pipe"
+            )
+            result = subprocess.run(ffmpeg_command, stdout=subprocess.PIPE, check=True)
+            image = cv2.imdecode(np.frombuffer(result.stdout, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+
             rois = self.find_rois(image, min_duration, max_duration)
             return [{
                 "file": audio_path, "fmin": fmin, "fmax": fmax, "start": start, "end": end
@@ -124,7 +124,7 @@ class FFbird:
             print(f"⚠️ Error processing {audio_path}: {e}")
             return []
 
-    def multiprocess_rois(self, path, min_duration=0.5, max_duration=10.0, csv_filename=None):
+    def multiprocess_rois(self, path, min_duration=0.5, max_duration=None, csv_filename=None):
         if os.path.isfile(path) and path.lower().endswith((".wav", ".mp3", ".flac")):
             audio_files = [path]
             print(f"🔍 Processing single audio file: '{path}'")
@@ -141,7 +141,7 @@ class FFbird:
 
         results = []
         with multiprocessing.Pool() as pool:
-            for result in tqdm(pool.imap_unordered(self._process_single_file, args), total=len(args), desc="Processing audio files"):
+            for result in tqdm(pool.imap_unordered(self._process_roi, args), total=len(args), desc="Processing audio files"):
                 results.extend(result)
 
         self.df = pd.DataFrame(results)
@@ -152,7 +152,7 @@ class FFbird:
 
         return self.df
 
-    def _download_roi(self, args):
+    def _download_roi(self, args, image_filter=None):
         audio_path, roi, index, output_dir, sr, mode = args
         fmin, fmax, start, end = roi
         duration = end - start
@@ -161,31 +161,31 @@ class FFbird:
         if mode in ["audio", "both"]:
             audio_filename = f"{base}_roi_{index+1}_f_{int(fmin)}-{int(fmax)}_t_{int(start)}-{int(end)}.wav"
             audio_path_out = os.path.join(output_dir, audio_filename)
-            audio_cmd = self.build_ffmpeg_command(
+            ffmpeg_command = self.build_ffmpeg_command(
                 audio_path, start, duration, fmin, fmax,
                 output_path=audio_path_out, mode='audio', output_mode='disk'
             )
-            subprocess.run(audio_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(ffmpeg_command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         if mode in ["image", "both"]:
             image_filename = f"{base}_roi_{index+1}_f_{int(fmin)}-{int(fmax)}_t_{int(start)}-{int(end)}.png"
             image_path_out = os.path.join(output_dir, image_filename)
 
-            # Simplified image filter (just showcwt with default vertical resolution, no tile/postprocessing)
-            cwt_filter = (
+            # Simplified image filter to output filtered and normalized spectrum image
+            cwt_filter = image_filter or (
                 f"aresample=resampler=soxr:out_sample_rate={sr},"
                 f"firequalizer=gain='if(lt(f,{fmin}),-INF,if(gt(f,{fmax}),-INF,0))',"
                 f"dynaudnorm=b=enabled,"
                 f"showspectrumpic=fscale=log"
             )
 
-            image_cmd = self.build_ffmpeg_command(
+            ffmpeg_command = self.build_ffmpeg_command(
                 audio_path, start, duration, fmin, fmax,
                 output_path=image_path_out,
                 mode='image', output_mode='disk',
                 image_filter=cwt_filter
             )
-            subprocess.run(image_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(ffmpeg_command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def download_rois(self, df=None, output_folder="rois", mode="audio"):
         os.makedirs(output_folder, exist_ok=True)
@@ -216,7 +216,7 @@ class FFbird:
 if __name__ == "__main__":
     
     ffbird = FFbird(sr=48000, fmin=150, fmax=8000)
-    ffbird.multiprocess_rois(path="Tinamus major/64136_24.00-27.00.wav", min_duration=1.0, max_duration=10.0, csv_filename='rois.csv')
+    ffbird.multiprocess_rois(path="Tinamus major/64136_24.00-27.00.wav", min_duration=1.0, csv_filename='rois.csv')
     ffbird.download_rois(output_folder="rois", mode="both")
     
     # "Tinamus major/64136_24.00-27.00.wav"
