@@ -1,10 +1,137 @@
 import subprocess
+import cv2
+import numpy as np
+
+class BirdROI:
+    def __init__(self, audio_path, sr=48000, fmin=20, fmax=15000, fps=25,
+                 min_duration=0.5, max_duration=None,
+                 audio_filter_chain=None, image_filter_chain=None,
+                 fscale="log"):
+        """
+        Initializes the BirdROI with parameters for audio processing and ROI extraction.
+        """
+        
+        self.audio_path = audio_path
+        self.sr = sr
+        self.fmin = fmin
+        self.fmax = fmax
+        self.fps = fps
+        self.min_duration = min_duration
+        self.max_duration = max_duration
+        self.fscale = fscale
+
+        self.audio_filter_chain = audio_filter_chain or (
+            f"aresample=resampler=soxr:out_sample_rate={self.sr},"
+            f"firequalizer=gain='if(lt(f,{self.fmin}),-INF,if(gt(f,{self.fmax}),-INF,0))',"
+            f"dynaudnorm=b=enabled"
+        )
+
+        self.image_filter_chain = image_filter_chain or (
+            f"{self.audio_filter_chain},"
+            f"showcwt=s=1x2048:iscale={self.fscale}:scale={self.fscale}:slide=scroll:"
+            f"rate={self.fps}:deviation=10:min={self.fmin}:max={self.fmax},"
+            f"fps={self.fps},format=yuv420p,extractplanes=y," +
+            f"dilation=threshold0=10," * 6 +
+            f"tblend=all_mode=hardmix,"
+        )
+
+        self.rois = self._extract_rois()
+
+    def _get_duration(self):
+        duration = subprocess.run([
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", self.audio_path
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        return float(duration.stdout.strip())
+    
+    def _get_image(self, duration):
+        image = subprocess.run([
+            "ffmpeg", "-y", "-hide_banner", "-v", "error",
+            "-ss", "0", "-t", str(duration), "-i", self.audio_path,
+            "-filter_complex", self.image_filter_chain + f"select=gte(n\\,1),tile={int(self.fps * duration)}x1",
+            "-frames:v", "1", "-f", "image2pipe", "-pix_fmt", "gray", "-vcodec", "png", "pipe:1"
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        return image
+    
+    def _convert_pixel_to_freq(self, y, height):
+        if self.fscale == "log":
+            log_f_min, log_f_max = np.log10(self.fmin), np.log10(self.fmax)
+            log_f = log_f_max - (y / height) * (log_f_max - log_f_min)
+            return 10 ** log_f
+        else:  # linear
+            return self.fmax - ((y / height) * (self.fmax - self.fmin))
+
+    def _find_rois(self, image, min_time_px=10, min_freq_px=10):
+        height = image.shape[0]
+        contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        rois_bounds = []
+
+        for cnt in contours:
+            if cnt is not None and len(cnt) > 0:
+                x, y, w, h = cv2.boundingRect(cnt.astype(np.int32))
+                if w >= min_time_px and h >= min_freq_px:
+                    merged = False
+                    for r in rois_bounds:
+                        rx, ry, rw, rh = r["bbox"]
+                        time_close = abs(x - (rx + rw)) <= min_time_px or abs(rx - (x + w)) <= min_time_px
+                        freq_overlap = not (y + h < ry - min_freq_px or ry + rh < y - min_freq_px)
+                        if time_close and freq_overlap:
+                            new_x, new_y = min(x, rx), min(y, ry)
+                            new_w = max(x + w, rx + rw) - new_x
+                            new_h = max(y + h, ry + rh) - new_y
+                            r["bbox"] = (new_x, new_y, new_w, new_h)
+                            merged = True
+                            break
+                    if not merged:
+                        rois_bounds.append({"bbox": (x, y, w, h)})
+
+        rois = []
+        for roi in rois_bounds:
+            x, y, w, h = roi["bbox"]
+            duration = w / self.fps
+            if duration >= self.min_duration and (self.max_duration is None or duration <= self.max_duration):
+                start, end = x / self.fps, (x + w) / self.fps
+                roi_fmin = self._convert_pixel_to_freq(y + h, height)
+                roi_fmax = self._convert_pixel_to_freq(y, height)
+                
+                # Append the ROI information
+                rois.append({
+                    "file": self.audio_path,
+                    "fmin": roi_fmin,
+                    "fmax": roi_fmax,
+                    "start": start,
+                    "end": end
+                })
+
+        return rois
+
+    def _extract_rois(self):
+        try:
+            duration = self._get_duration()
+            image = self._get_image(duration)
+            imdecode = cv2.imdecode(np.frombuffer(image.stdout, np.uint8), cv2.IMREAD_GRAYSCALE)
+            return self._find_rois(imdecode)
+        except Exception as e:
+            print(f"❌ Failed to extract ROIs: {e}")
+            return []
+
+
+
+
+
+
+
+
+
+import subprocess
 import multiprocessing
 import os
 import cv2
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+
 
 class FFbird:
     def __init__(self, sr=48000, fmin=20, fmax=15000, fps=25):
