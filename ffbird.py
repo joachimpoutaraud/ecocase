@@ -1,18 +1,15 @@
 import os
 import subprocess
-import cv2
 import numpy as np
-import matplotlib.pyplot as plt
 
+import cv2
 import librosa
-import librosa.display
-
 
 class BirdROI:
     def __init__(self, audio_path, sr=48000, fmin=20, fmax=15000, fps=25,
                  min_duration=0.5, max_duration=None,
                  audio_filter_chain=None, image_filter_chain=None, 
-                 fscale="mel", n_fft=2048, hop_length=512):
+                 fscale="linear", n_fft=2048, hop_length=512):
         """
         Initializes the BirdROI with parameters for audio processing and ROI extraction.
         """
@@ -39,7 +36,7 @@ class BirdROI:
             f"showcwt=s=1x{self.n_fft}:slide=scroll:pps={self.hop_length}:"
             f"rate={self.fps}:deviation=10:min={self.fmin}:max={self.fmax},"
             f"fps={self.fps},format=yuv420p,extractplanes=y,"
-            + f"dilation=threshold0=10," * 6 +
+            + f"dilation=threshold0=10," * 10 +
             f"tblend=all_mode=hardmix,"
         )
 
@@ -100,29 +97,16 @@ class BirdROI:
         self.image = image
         return self.image
 
-    def _find_rois(self, image, min_time_px=10, min_freq_px=10):
+    def _find_rois(self, image, min_time_px=20, min_freq_px=20, plot_contours=True):
         height = image.shape[0]
         contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        rois_bounds = []
 
+        rois_bounds = []
         for cnt in contours:
             if cnt is not None and len(cnt) > 0:
                 x, y, w, h = cv2.boundingRect(cnt.astype(np.int32))
-                if w >= min_time_px and h >= min_freq_px:
-                    merged = False
-                    for r in rois_bounds:
-                        rx, ry, rw, rh = r["bbox"]
-                        time_close = abs(x - (rx + rw)) <= min_time_px or abs(rx - (x + w)) <= min_time_px
-                        freq_overlap = not (y + h < ry - min_freq_px or ry + rh < y - min_freq_px)
-                        if time_close and freq_overlap:
-                            new_x, new_y = min(x, rx), min(y, ry)
-                            new_w = max(x + w, rx + rw) - new_x
-                            new_h = max(y + h, ry + rh) - new_y
-                            r["bbox"] = (new_x, new_y, new_w, new_h)
-                            merged = True
-                            break
-                    if not merged:
-                        rois_bounds.append({"bbox": (x, y, w, h)})
+                if w > min_time_px and h > min_freq_px:
+                    rois_bounds.append({"bbox": (x, y, w, h)})
 
         rois = []
         for roi in rois_bounds:
@@ -130,7 +114,6 @@ class BirdROI:
             duration = w / self.fps
             if duration >= self.min_duration and (self.max_duration is None or duration <= self.max_duration):
                 start, end = x / self.fps, (x + w) / self.fps
-                # Use precomputed mapping from y-pixel to frequency
                 roi_fmin = self._y_to_freq[min(y + h, height - 1)]
                 roi_fmax = self._y_to_freq[max(y, 0)]
                 rois.append({
@@ -140,6 +123,20 @@ class BirdROI:
                     "start": start,
                     "end": end
                 })
+
+        if plot_contours:
+            import matplotlib.pyplot as plt
+            img_rgb = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+            cv2.drawContours(img_rgb, contours, -1, (0, 255, 0), 1)
+            for roi in rois_bounds:
+                x, y, w, h = roi["bbox"]
+                # Draw rectangle from (x, y) to (x + w - 1, y + h - 1)
+                cv2.rectangle(img_rgb, (x, y), (x + w - 1, y + h - 1), (255, 0, 0), 1)
+            plt.figure(figsize=(12, 6))
+            plt.imshow(img_rgb)
+            plt.title("ROI Contours and Bounding Boxes")
+            plt.axis("off")
+            plt.show()
 
         return rois
 
@@ -177,35 +174,10 @@ class BirdROI:
             except subprocess.CalledProcessError as e:
                 print(f"⚠️ Failed to export ROI #{idx+1}: {e}")
                 
-    def plot_rois(self, figsize=(12, 6), cmap="gray_r", color="lime", linewidth=2, n_mels=128):
-        y, sr = librosa.load(self.audio_path, sr=self.sr)
-        S = librosa.feature.melspectrogram(y=y, sr=sr, n_fft=self.n_fft, hop_length=self.hop_length,
-                                        fmin=self.fmin, fmax=self.fmax, n_mels=n_mels)
-        S_db = librosa.power_to_db(S, ref=np.max)
-
-        fig, ax = plt.subplots(figsize=figsize)
-        img = librosa.display.specshow(S_db, sr=sr, hop_length=self.hop_length, x_axis='time',
-                                    y_axis='mel', fmin=self.fmin, fmax=self.fmax,
-                                    cmap=cmap, ax=ax)
-
-        for roi in self.rois:
-            start = roi["start"]
-            end = roi["end"]
-            fmin = roi["fmin"]
-            fmax = roi["fmax"]
-            ax.add_patch(plt.Rectangle((start, fmin), end - start, fmax - fmin,
-                                    edgecolor=color, facecolor='none', linewidth=linewidth))
-
-        ax.set_title("Detected ROIs over Mel-Spectrogram")
-        plt.colorbar(img, ax=ax, format="%+2.f dB")
-        plt.tight_layout()
-        plt.show()
 
 if __name__ == "__main__":
     
-    bird = BirdROI(audio_path="SMA04635_20220318_182700.wav", sr=48000, fmin=150, fmax=8000, min_duration=0.1)
-    bird.plot_rois()
-
+    bird = BirdROI(audio_path="Tinamus major/64136_24.00-27.00.wav", sr=48000, fmin=150, fmax=8000, min_duration=0.5, fscale="log")
 
     # "Tinamus major/64136_24.00-27.00.wav"
     # "data/SMA04786_20220113_182200.wav"
