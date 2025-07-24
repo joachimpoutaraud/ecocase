@@ -11,8 +11,8 @@ import librosa.display
 class BirdROI:
     def __init__(self, audio_path, sr=48000, fmin=20, fmax=15000, fps=25,
                  min_duration=0.5, max_duration=None,
-                 audio_filter_chain=None, image_filter_chain=None,
-                 fscale="linear"):
+                 audio_filter_chain=None, image_filter_chain=None, 
+                 fscale="mel", n_fft=2048, hop_length=512):
         """
         Initializes the BirdROI with parameters for audio processing and ROI extraction.
         """
@@ -25,6 +25,8 @@ class BirdROI:
         self.min_duration = min_duration
         self.max_duration = max_duration
         self.fscale = fscale
+        self.n_fft = n_fft
+        self.hop_length = hop_length
 
         self.audio_filter_chain = audio_filter_chain or (
             f"aresample=resampler=soxr:out_sample_rate={self.sr},"
@@ -34,10 +36,10 @@ class BirdROI:
 
         self.image_filter_chain = image_filter_chain or (
             f"{self.audio_filter_chain},"
-            f"showcwt=s=1x1024:scale={self.fscale}:slide=scroll:"
+            f"showcwt=s=1x{self.n_fft}:slide=scroll:pps={self.hop_length}:"
             f"rate={self.fps}:deviation=10:min={self.fmin}:max={self.fmax},"
-            f"fps={self.fps},"
-            f"format=yuv420p,extractplanes=y," + f"dilation=threshold0=10," * 10 +
+            f"fps={self.fps},format=yuv420p,extractplanes=y,"
+            + f"dilation=threshold0=10," * 6 +
             f"tblend=all_mode=hardmix,"
         )
 
@@ -52,34 +54,51 @@ class BirdROI:
         self.duration = float(duration.stdout.strip())
         return self.duration
     
-    def _get_image(self, duration, output_path='cwt.png'):
-        base_cmd = [
+    def _get_image(self, duration, output_path=None):
+        cmd = [
             "ffmpeg", "-y", "-hide_banner", "-v", "error",
             "-ss", "0", "-t", str(duration), "-i", self.audio_path,
-            "-filter_complex", self.image_filter_chain + f"select=gte(n\\,1),tile={int(self.fps * duration)}x1",
-            "-frames:v", "1", "-pix_fmt", "gray", "-vcodec", "png"
+            "-filter_complex", self.image_filter_chain + f"select=gte(n\\,1),tile={int(self.fps * duration)}x1", 
+            "-frames:v", "1", "-pix_fmt", "gray", "-vcodec", "png", "-f", "image2pipe", "pipe:1"
         ]
 
-        if output_path:
-            # Save image directly to disk
-            cmd = base_cmd + [output_path]
-            subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE, check=True)
-            self.image = cv2.imread(output_path, cv2.IMREAD_GRAYSCALE)
-        else:
-            # Pipe image into memory
-            cmd = base_cmd + ["-f", "image2pipe", "pipe:1"]
-            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-            self.image = cv2.imdecode(np.frombuffer(result.stdout, np.uint8), cv2.IMREAD_GRAYSCALE)
+        # Pipe image into memory and decode it
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        image = cv2.imdecode(np.frombuffer(result.stdout, np.uint8), cv2.IMREAD_GRAYSCALE)
 
+        # Remap y-axis to mel or log if requested
+        if self.fscale in ("log", "mel"):
+            height = image.shape[0]
+            new_image = np.zeros_like(image)
+            self._y_to_freq = np.zeros(height)
+            for y in range(height):
+                if self.fscale == "log":
+                    log_f_min, log_f_max = np.log10(self.fmin), np.log10(self.fmax)
+                    frac = y / (height - 1)
+                    log_f = log_f_max - frac * (log_f_max - log_f_min)
+                    freq = 10 ** log_f
+                    y_lin = int((self.fmax - freq) / (self.fmax - self.fmin) * (height - 1))
+                elif self.fscale == "mel": 
+                    mel_f_min = librosa.hz_to_mel(self.fmin)
+                    mel_f_max = librosa.hz_to_mel(self.fmax)
+                    frac = y / (height - 1)
+                    mel = mel_f_max - frac * (mel_f_max - mel_f_min)
+                    freq = librosa.mel_to_hz(mel)
+                    y_lin = int((self.fmax - freq) / (self.fmax - self.fmin) * (height - 1))
+                y_lin = np.clip(y_lin, 0, height - 1)
+                new_image[y, :] = image[y_lin, :]
+                self._y_to_freq[y] = freq
+            image = new_image
+        else:
+            # For linear, just store the mapping
+            height = image.shape[0]
+            self._y_to_freq = np.array([self.fmax - ((y / (height - 1)) * (self.fmax - self.fmin)) for y in range(height)])
+
+        if output_path:
+            cv2.imwrite(output_path, image)
+
+        self.image = image
         return self.image
-    
-    def _convert_pixel_to_freq(self, y, height):
-        if self.fscale == "log":
-            log_f_min, log_f_max = np.log10(self.fmin), np.log10(self.fmax)
-            log_f = log_f_max - (y / height) * (log_f_max - log_f_min)
-            return 10 ** log_f
-        else:  # linear
-            return self.fmax - ((y / height) * (self.fmax - self.fmin))
 
     def _find_rois(self, image, min_time_px=10, min_freq_px=10):
         height = image.shape[0]
@@ -111,10 +130,9 @@ class BirdROI:
             duration = w / self.fps
             if duration >= self.min_duration and (self.max_duration is None or duration <= self.max_duration):
                 start, end = x / self.fps, (x + w) / self.fps
-                roi_fmin = self._convert_pixel_to_freq(y + h, height)
-                roi_fmax = self._convert_pixel_to_freq(y, height)
-                
-                # Append the ROI information
+                # Use precomputed mapping from y-pixel to frequency
+                roi_fmin = self._y_to_freq[min(y + h, height - 1)]
+                roi_fmax = self._y_to_freq[max(y, 0)]
                 rois.append({
                     "file": self.audio_path,
                     "fmin": roi_fmin,
@@ -159,14 +177,14 @@ class BirdROI:
             except subprocess.CalledProcessError as e:
                 print(f"⚠️ Failed to export ROI #{idx+1}: {e}")
                 
-    def plot_rois(self, figsize=(12, 6), cmap="gray_r", color="lime", linewidth=2):
+    def plot_rois(self, figsize=(12, 6), cmap="gray_r", color="lime", linewidth=2, n_mels=128):
         y, sr = librosa.load(self.audio_path, sr=self.sr)
-        S = librosa.feature.melspectrogram(y=y, sr=sr, n_fft=2048, hop_length=512,
-                                        fmin=self.fmin, fmax=self.fmax)
+        S = librosa.feature.melspectrogram(y=y, sr=sr, n_fft=self.n_fft, hop_length=self.hop_length,
+                                        fmin=self.fmin, fmax=self.fmax, n_mels=n_mels)
         S_db = librosa.power_to_db(S, ref=np.max)
 
         fig, ax = plt.subplots(figsize=figsize)
-        img = librosa.display.specshow(S_db, sr=sr, hop_length=512, x_axis='time',
+        img = librosa.display.specshow(S_db, sr=sr, hop_length=self.hop_length, x_axis='time',
                                     y_axis='mel', fmin=self.fmin, fmax=self.fmax,
                                     cmap=cmap, ax=ax)
 
@@ -185,8 +203,8 @@ class BirdROI:
 
 if __name__ == "__main__":
     
-    bird = BirdROI(audio_path="data/SMA04786_20220113_182200.wav", sr=48000, fmin=150, fmax=8000, min_duration=0.5)
-    # bird.plot_rois()
+    bird = BirdROI(audio_path="SMA04635_20220318_182700.wav", sr=48000, fmin=150, fmax=8000, min_duration=0.1)
+    bird.plot_rois()
 
 
     # "Tinamus major/64136_24.00-27.00.wav"
