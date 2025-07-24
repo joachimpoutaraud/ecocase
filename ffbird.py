@@ -9,7 +9,7 @@ class BirdROI:
     def __init__(self, audio_path, sr=48000, fmin=20, fmax=15000, fps=25,
                  min_duration=0.5, max_duration=None,
                  audio_filter_chain=None, image_filter_chain=None, 
-                 fscale="linear", n_fft=2048, hop_length=512):
+                 fscale="mel", n_fft=2048, hop_length=512):
         """
         Initializes the BirdROI with parameters for audio processing and ROI extraction.
         """
@@ -36,7 +36,6 @@ class BirdROI:
             f"showcwt=s=1x{self.n_fft}:slide=scroll:pps={self.hop_length}:"
             f"rate={self.fps}:deviation=10:min={self.fmin}:max={self.fmax},"
             f"fps={self.fps},format=yuv420p,extractplanes=y,"
-            + f"dilation=threshold0=10," * 10 +
             f"tblend=all_mode=hardmix,"
         )
 
@@ -98,21 +97,44 @@ class BirdROI:
         return self.image
 
     def _find_rois(self, image, min_time_px=20, min_freq_px=20, plot_contours=True):
-        height = image.shape[0]
-        contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        rois_bounds = []
+        # Preprocess image: blur and morphological operations to enhance blobs
+        # Gaussian blur to smooth noise
+        blurred = cv2.GaussianBlur(image, (5, 5), 0)
+        # Adaptive threshold or Otsu's threshold to binarize
+        _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        # Morphological closing to fill gaps and make blobs chunkier
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+        morphed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
+        # Dilate to further thicken blobs
+        dilated = cv2.dilate(morphed, kernel, iterations=1)
+        
+        # Find contours in the processed image
+        contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        rois = []
         for cnt in contours:
             if cnt is not None and len(cnt) > 0:
                 x, y, w, h = cv2.boundingRect(cnt.astype(np.int32))
-                if w > min_time_px and h > min_freq_px:
-                    rois_bounds.append({"bbox": (x, y, w, h)})
+            if w > min_time_px and h > min_freq_px:
+                rois.append({"bbox": (x, y, w, h)})
 
-        rois = []
-        for roi in rois_bounds:
-            x, y, w, h = roi["bbox"]
-            duration = w / self.fps
-            if duration >= self.min_duration and (self.max_duration is None or duration <= self.max_duration):
+        return rois
+
+    def _extract_rois(self):
+        try:
+            duration = self._get_duration()
+            image = self._get_image(duration)
+            rois_bounds = self._find_rois(image)
+
+            # Get the height of the image
+            height = image.shape[0]
+            rois = []
+            # Extract ROIs based on bounding boxes
+            for roi in rois_bounds:
+                x, y, w, h = roi["bbox"]
+                # Convert width in pixels to duration in seconds
+                duration = w / self.fps
+                if duration < self.min_duration or (self.max_duration is not None and duration > self.max_duration):
+                    continue  # Skip ROIs that do not meet duration criteria
                 start, end = x / self.fps, (x + w) / self.fps
                 roi_fmin = self._y_to_freq[min(y + h, height - 1)]
                 roi_fmax = self._y_to_freq[max(y, 0)]
@@ -123,28 +145,9 @@ class BirdROI:
                     "start": start,
                     "end": end
                 })
-
-        if plot_contours:
-            import matplotlib.pyplot as plt
-            img_rgb = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
-            cv2.drawContours(img_rgb, contours, -1, (0, 255, 0), 1)
-            for roi in rois_bounds:
-                x, y, w, h = roi["bbox"]
-                # Draw rectangle from (x, y) to (x + w - 1, y + h - 1)
-                cv2.rectangle(img_rgb, (x, y), (x + w - 1, y + h - 1), (255, 0, 0), 1)
-            plt.figure(figsize=(12, 6))
-            plt.imshow(img_rgb)
-            plt.title("ROI Contours and Bounding Boxes")
-            plt.axis("off")
-            plt.show()
-
-        return rois
-
-    def _extract_rois(self):
-        try:
-            duration = self._get_duration()
-            image = self._get_image(duration)
-            return self._find_rois(image)
+                
+            return rois
+            
         except Exception as e:
             print(f"❌ Failed to extract ROIs: {e}")
             return []
@@ -174,11 +177,52 @@ class BirdROI:
             except subprocess.CalledProcessError as e:
                 print(f"⚠️ Failed to export ROI #{idx+1}: {e}")
                 
+    def plot_rois(self, figsize=(6, 12), box_color=(255, 0, 0), box_thickness=2):
+        import matplotlib.pyplot as plt
+        img_rgb = cv2.cvtColor(self.image, cv2.COLOR_GRAY2RGB)
+
+        for roi in self.rois:
+            # Convert start/end to pixel positions
+            x = int(roi["start"] * self.fps)
+            w = int((roi["end"] - roi["start"]) * self.fps)
+            
+            # Convert frequency bounds to vertical positions (reversed y-axis)
+            height = self.image.shape[0]
+            fmin = roi["fmin"]
+            fmax = roi["fmax"]
+            
+            if self.fscale == "log":
+                def freq_to_y(f):  # reverse of log mapping
+                    log_f_min, log_f_max = np.log10(self.fmin), np.log10(self.fmax)
+                    return int(height * (1 - (np.log10(f) - log_f_min) / (log_f_max - log_f_min)))
+            elif self.fscale == "mel":
+                def freq_to_y(f): # reverse of mel mapping
+                    mel = librosa.hz_to_mel(f)
+                    mel_min = librosa.hz_to_mel(self.fmin)
+                    mel_max = librosa.hz_to_mel(self.fmax)
+                    return int(height * (1 - (mel - mel_min) / (mel_max - mel_min)))
+            else:
+                def freq_to_y(f):  # reverse of linear mapping
+                    return int(height * (1 - (f - self.fmin) / (self.fmax - self.fmin)))
+
+            y1 = freq_to_y(fmax)
+            y2 = freq_to_y(fmin)
+            h = y2 - y1
+            
+            # Draw the bounding boxes
+            cv2.rectangle(img_rgb, (x, y1), (x + w, y1 + h), box_color, box_thickness)
+
+        plt.figure(figsize=figsize)
+        plt.imshow(img_rgb)
+        plt.title("ROIs with Bounding Boxes")
+        plt.axis("off")
+        plt.show()
+                
 
 if __name__ == "__main__":
     
-    bird = BirdROI(audio_path="Tinamus major/64136_24.00-27.00.wav", sr=48000, fmin=150, fmax=8000, min_duration=0.5, fscale="log")
-
+    bird = BirdROI(audio_path="data/SMA04786_20220113_182200.wav", sr=48000, fmin=150, fmax=8000, min_duration=0.5, fscale="mel")
+    bird.plot_rois()
     # "Tinamus major/64136_24.00-27.00.wav"
     # "data/SMA04786_20220113_182200.wav"
     # "Nyctibius bracteatus/5071_3.00-6.00.wav"
