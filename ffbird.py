@@ -50,7 +50,7 @@ class BirdROI:
         self.duration = float(duration.stdout.strip())
         return self.duration
     
-    def _get_image(self, duration, output_path=None):
+    def _get_image(self, duration, output_path='cwt.png', preprocess=True):
         cmd = [
             "ffmpeg", "-y", "-hide_banner", "-v", "error",
             "-ss", "0", "-t", str(duration), "-i", self.audio_path,
@@ -60,7 +60,11 @@ class BirdROI:
 
         # Pipe image into memory and decode it
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-        image = cv2.imdecode(np.frombuffer(result.stdout, np.uint8), cv2.IMREAD_GRAYSCALE)
+        # Optionally, apply blur and morphological operations
+        if preprocess:
+            result = self.apply_blur_morpho(result.stdout, close_iters=2, dilate_iters=2)
+        # Decode the image
+        image = cv2.imdecode(np.frombuffer(result, np.uint8), cv2.IMREAD_GRAYSCALE)
 
         # Remap y-axis to mel or log if requested
         if self.fscale in ("log", "mel"):
@@ -96,20 +100,67 @@ class BirdROI:
         self.image = image
         return self.image
 
-    def _find_rois(self, image, min_time_px=20, min_freq_px=20, plot_contours=True):
+
+    def apply_blur_morpho(self, image_bytes, close_iters=2, dilate_iters=2, kernel=(16,16)):
+        total_iters = close_iters + dilate_iters
+
+        # Build filter_complex
+        filter_lines = []
+        # Generate one ellipse and split it
+        filter_lines.append(
+            f"color=black:s={kernel[0]}x{kernel[1]},format=gray8"
+            ",geq=lum='255*lte(hypot((((2*X+1)/W-1)*cos(PI/4)-((2*Y+1)/H-1)*sin(PI/4))/0.5,"
+            "(((2*X+1)/W-1)*sin(PI/4)+((2*Y+1)/H-1)*cos(PI/4))/1),1)',format=gray[ellipse]"
+        )
+        filter_lines.append(f"[ellipse]split={total_iters}" + "".join([f"[el{i+1}]" for i in range(total_iters)]))
+        # Blur input
+        filter_lines.append("[0:v]gblur=sigma=0.5[blurred]")
+
+        # Apply morpho filters
+        prev = "blurred"
+        for i in range(close_iters):
+            filter_lines.append(f"[{prev}][el{i+1}]morpho=mode=close[d{i+1}]")
+            prev = f"d{i+1}"
+        for i in range(dilate_iters):
+            idx = close_iters + i
+            filter_lines.append(f"[{prev}][el{idx+1}]morpho=mode=dilate[d{idx+1}]")
+            prev = f"d{idx+1}"
+
+        filter_lines.append(f"[{prev}]copy[out]")
+        filter_complex = ";".join(filter_lines)
+
+        # FFmpeg command
+        morpho_cmd = [
+            "ffmpeg", "-y", "-hide_banner", "-v", "error",
+            "-f", "image2pipe", "-vcodec", "png", "-i", "pipe:0",
+            "-filter_complex", filter_complex,
+            "-map", "[out]", "-frames:v", "1", "-pix_fmt", "gray", "-vcodec", "png",
+            "-f", "image2pipe", "pipe:1"
+        ]
+
+        # Run FFmpeg
+        p = subprocess.Popen(morpho_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        result, err = p.communicate(input=image_bytes)
+
+        if p.returncode != 0:
+            raise RuntimeError(f"FFmpeg failed: {err.decode()}")
+
+        return result
+
+    def _find_rois(self, image, min_time_px=20, min_freq_px=20):
         # Preprocess image: blur and morphological operations to enhance blobs
-        # Gaussian blur to smooth noise
-        blurred = cv2.GaussianBlur(image, (5, 5), 0)
-        # Adaptive threshold or Otsu's threshold to binarize
-        _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        # Morphological closing to fill gaps and make blobs chunkier
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-        morphed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
-        # Dilate to further thicken blobs
-        dilated = cv2.dilate(morphed, kernel, iterations=1)
+        # # Gaussian blur to smooth noise
+        # blurred = cv2.GaussianBlur(image, (5, 5), 0)
+        # # Adaptive threshold or Otsu's threshold to binarize
+        # _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        # # Morphological closing to fill gaps and make blobs chunkier
+        # kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+        # morphed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
+        # # Dilate to further thicken blobs
+        # image = cv2.dilate(morphed, kernel, iterations=2)
         
         # Find contours in the processed image
-        contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         rois = []
         for cnt in contours:
             if cnt is not None and len(cnt) > 0:
@@ -164,10 +215,16 @@ class BirdROI:
             filename = f"{base}_roi_{idx+1}_f_{int(fmin)}-{int(fmax)}_t_{int(start)}-{int(end)}.wav"
             output_path = os.path.join(output_dir, filename)
 
+            audio_filter_chain = (
+                f"aresample=resampler=soxr:out_sample_rate={self.sr},"
+                f"firequalizer=gain='if(lt(f,{fmin}),-INF,if(gt(f,{fmax}),-INF,0))',"
+                f"dynaudnorm=b=enabled"
+            )
+
             ffmpeg_cmd = [
                 "ffmpeg", "-y", "-hide_banner", "-v", "error",
                 "-ss", str(start), "-t", str(duration), "-i", self.audio_path,
-                "-af", self.audio_filter_chain,
+                "-af", audio_filter_chain,
                 "-ac", "1", "-ar", str(self.sr),
                 output_path
             ]
@@ -177,52 +234,97 @@ class BirdROI:
             except subprocess.CalledProcessError as e:
                 print(f"⚠️ Failed to export ROI #{idx+1}: {e}")
                 
-    def plot_rois(self, figsize=(6, 12), box_color=(255, 0, 0), box_thickness=2):
+    def plot_rois(self, figsize=(10, 6), box_color="red", box_linewidth=2):
         import matplotlib.pyplot as plt
-        img_rgb = cv2.cvtColor(self.image, cv2.COLOR_GRAY2RGB)
+        import librosa.display
 
+        # Load audio
+        y, sr = librosa.load(self.audio_path, sr=self.sr)
+        # Compute spectrum
+        if self.fscale == 'mel':
+            S = librosa.feature.melspectrogram(y=y, n_fft=self.n_fft, hop_length=self.hop_length, fmax=self.fmax, fmin=self.fmin, sr=sr)
+        else:
+            S = librosa.stft(y, n_fft=self.n_fft, hop_length=self.hop_length)
+        S_db = librosa.amplitude_to_db(np.abs(S), ref=np.max)
+
+        _, ax = plt.subplots(figsize=figsize)
+        img = librosa.display.specshow(
+            S_db,
+            sr=sr,
+            hop_length=self.hop_length,
+            x_axis='time',
+            y_axis=self.fscale,
+            fmin=self.fmin,
+            fmax=self.fmax,
+            ax=ax
+        )
+        plt.colorbar(img, ax=ax, format="%+2.0f dB")
+
+        # Draw bounding boxes for ROIs
         for roi in self.rois:
-            # Convert start/end to pixel positions
-            x = int(roi["start"] * self.fps)
-            w = int((roi["end"] - roi["start"]) * self.fps)
-            
-            # Convert frequency bounds to vertical positions (reversed y-axis)
-            height = self.image.shape[0]
-            fmin = roi["fmin"]
-            fmax = roi["fmax"]
-            
-            if self.fscale == "log":
-                def freq_to_y(f):  # reverse of log mapping
-                    log_f_min, log_f_max = np.log10(self.fmin), np.log10(self.fmax)
-                    return int(height * (1 - (np.log10(f) - log_f_min) / (log_f_max - log_f_min)))
-            elif self.fscale == "mel":
-                def freq_to_y(f): # reverse of mel mapping
-                    mel = librosa.hz_to_mel(f)
-                    mel_min = librosa.hz_to_mel(self.fmin)
-                    mel_max = librosa.hz_to_mel(self.fmax)
-                    return int(height * (1 - (mel - mel_min) / (mel_max - mel_min)))
-            else:
-                def freq_to_y(f):  # reverse of linear mapping
-                    return int(height * (1 - (f - self.fmin) / (self.fmax - self.fmin)))
+            ax.add_patch(
+            plt.Rectangle(
+                (roi["start"], min(roi["fmin"], roi["fmax"])),
+                roi["end"] - roi["start"],
+                abs(roi["fmax"] - roi["fmin"]),
+                edgecolor=box_color,
+                facecolor='none',
+                linewidth=box_linewidth
+            )
+            )
 
-            y1 = freq_to_y(fmax)
-            y2 = freq_to_y(fmin)
-            h = y2 - y1
-            
-            # Draw the bounding boxes
-            cv2.rectangle(img_rgb, (x, y1), (x + w, y1 + h), box_color, box_thickness)
-
-        plt.figure(figsize=figsize)
-        plt.imshow(img_rgb)
-        plt.title("ROIs with Bounding Boxes")
-        plt.axis("off")
+        ax.set_title("Spectrogram with ROI Bounding Boxes")
+        plt.tight_layout()
         plt.show()
+
+    # def plot_rois(self, figsize=(6, 12), box_color=(255, 0, 0), box_thickness=2):
+    #     import matplotlib.pyplot as plt
+    #     img_rgb = cv2.cvtColor(self.image, cv2.COLOR_GRAY2RGB)
+
+    #     for roi in self.rois:
+    #         # Convert start/end to pixel positions
+    #         x = int(roi["start"] * self.fps)
+    #         w = int((roi["end"] - roi["start"]) * self.fps)
+            
+    #         # Convert frequency bounds to vertical positions (reversed y-axis)
+    #         height = self.image.shape[0]
+    #         fmin = roi["fmin"]
+    #         fmax = roi["fmax"]
+            
+    #         if self.fscale == "log":
+    #             def freq_to_y(f):  # reverse of log mapping
+    #                 log_f_min, log_f_max = np.log10(self.fmin), np.log10(self.fmax)
+    #                 return int(height * (1 - (np.log10(f) - log_f_min) / (log_f_max - log_f_min)))
+    #         elif self.fscale == "mel":
+    #             def freq_to_y(f): # reverse of mel mapping
+    #                 mel = librosa.hz_to_mel(f)
+    #                 mel_min = librosa.hz_to_mel(self.fmin)
+    #                 mel_max = librosa.hz_to_mel(self.fmax)
+    #                 return int(height * (1 - (mel - mel_min) / (mel_max - mel_min)))
+    #         else:
+    #             def freq_to_y(f):  # reverse of linear mapping
+    #                 return int(height * (1 - (f - self.fmin) / (self.fmax - self.fmin)))
+
+    #         y1 = freq_to_y(fmax)
+    #         y2 = freq_to_y(fmin)
+    #         h = y2 - y1
+            
+    #         # Draw the bounding boxes
+    #         cv2.rectangle(img_rgb, (x, y1), (x + w, y1 + h), box_color, box_thickness)
+
+    #     plt.figure(figsize=figsize)
+    #     plt.imshow(img_rgb)
+    #     plt.title("ROIs with Bounding Boxes")
+    #     plt.axis("off")
+    #     plt.show()
                 
 
 if __name__ == "__main__":
     
-    bird = BirdROI(audio_path="data/SMA04786_20220113_182200.wav", sr=48000, fmin=150, fmax=8000, min_duration=0.5, fscale="mel")
+    bird = BirdROI(audio_path="Turdus_iliacus/XC101610.wav", sr=48000, fmin=150, fmax=8000, min_duration=0.5, fscale="mel")
     bird.plot_rois()
+    # bird.download_rois()
+
     # "Tinamus major/64136_24.00-27.00.wav"
     # "data/SMA04786_20220113_182200.wav"
     # "Nyctibius bracteatus/5071_3.00-6.00.wav"
