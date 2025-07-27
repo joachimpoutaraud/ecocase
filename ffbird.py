@@ -23,6 +23,17 @@ class BirdROI(RecordingBuffer):
         self.fscale = fscale
         self.n_fft = n_fft
         self.hop_length = hop_length
+        # birdnetlib parameters
+        self.analyzer = Analyzer()
+        self.sample_secs=3.0
+        self.week_48=-1
+        self.date=None
+        self.sensitivity=1.0
+        self.lat=None
+        self.lon=None
+        self.min_conf=0.1
+        self.overlap=0.0
+        self.return_all_detections=False  
 
         self.audio_filter_chain = audio_filter_chain or (
             f"aresample=resampler=soxr:out_sample_rate={self.rate},"
@@ -90,6 +101,9 @@ class BirdROI(RecordingBuffer):
                 # Decode audio and image bytes
                 self.audio = np.frombuffer(audio_bytes, dtype=np.float32)
                 self.image = cv2.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+        
+        # For birdnetlib compliance        
+        self.buffer = self.audio
 
         return self.audio, self.image
 
@@ -189,22 +203,7 @@ class BirdROI(RecordingBuffer):
                     rect = patches.Rectangle((x_m, y_m), w_m, h_m, linewidth=2, edgecolor='lime', facecolor='none')
                     ax.add_patch(rect)
                 ax.set_title("Detected ROIs with Margins")
-                plt.show()
-
-
-            # self.analyzer = Analyzer()
-            # self.buffer = self.audio
-            # self.sample_secs=3.0
-            # self.week_48=-1
-            # self.date=None
-            # self.sensitivity=1.0
-            # self.lat=None
-            # self.lon=None
-            # self.min_conf=0.1
-            # self.overlap=0.0
-            # self.return_all_detections=False  
-            
-            # self.extract_embeddings()  
+                plt.show() 
 
             return self.rois
 
@@ -289,22 +288,12 @@ class BirdROI(RecordingBuffer):
 if __name__ == "__main__":
     import time
     
-    from birdnetlib.main import RecordingBuffer
-    from birdnetlib.analyzer import Analyzer
     start_time = time.time()
 
     bird = BirdROI(audio_path="turdus.mp3", fscale="linear")
-    # bird.extract_rois(min_duration=0.5, plot=False)
-
-
-    analyzer = Analyzer()
-    analyzer.interpreter.allocate_tensors()
-
-    recording = RecordingBuffer(analyzer, 
-                                bird.audio, 
-                                bird.rate,
-                                )
-    recording.extract_embeddings()
+    bird.extract_rois(min_duration=0.5, plot=False)
+                    
+    bird.extract_embeddings()
 
     end_time = time.time()
     execution_time = end_time - start_time
