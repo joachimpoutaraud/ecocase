@@ -10,7 +10,7 @@ from birdnetlib.analyzer import Analyzer
 class BirdROI(RecordingBuffer):
     def __init__(self, audio_path, rate=48000, fmin=150, fmax=8000, fps=50,
                  audio_filter_chain=None, image_filter_chain=None, 
-                 fscale="log", n_fft=512, hop_length=128):
+                 fscale="log", n_fft=256, hop_length=64):
         """
         Initializes the BirdROI with parameters for audio processing and ROI extraction.
         """
@@ -39,16 +39,16 @@ class BirdROI(RecordingBuffer):
             f"aresample=resampler=soxr:out_sample_rate={self.rate},"
             f"firequalizer=gain='if(lt(f,{self.fmin}),-INF,if(gt(f,{self.fmax}),-INF,0))',"
             f"dynaudnorm=b=enabled"
+            # f"anlmdn=s=1000:r=0.001"
             # f"asendcmd=0.0 afftdn sn start,"
             # f"asendcmd=1.0 afftdn sn stop,"
-            # f"afftdn=tn=1:tr=1,afftdn=tn=1:tr=1"
+            # f"afftdn=tn=1:tr=1" #,afftdn=nf=-20:tr=1,afftdn=nf=-20:tr=1"
         )
 
         self.image_filter_chain = image_filter_chain or (
-            # f"{self.audio_filter_chain},"
             f"showcwt=s=1x{self.n_fft}:slide=scroll:pps={self.hop_length}:"
             f"rate={self.fps}:deviation=10:min={self.fmin}:max={self.fmax},"
-            # f"showspectrum=s=1x{self.n_fft}:slide=scroll:gain=5:"
+            # f"showspectrum=s=1x{self.n_fft}:slide=scroll:"
             # f"start={self.fmin}:stop={self.fmax}:color=intensity,"
             f"fps={self.fps}," # format=yuv420p,extractplanes=y,"
             f"tblend=all_mode=hardmix"
@@ -64,13 +64,37 @@ class BirdROI(RecordingBuffer):
         ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.duration = float(duration.stdout.strip())
         return self.duration
+    
+    # def process_audio_data(self, rate, min_duration=0.5):
+    #     # Split audio into 3-second chunks
+    #     seconds = self.sample_secs
+
+    #     chunks = []
+    #     for i in range(0, len(self.ndarray), int((seconds - self.overlap) * rate)):
+    #         split = self.ndarray[i : i + int(seconds * rate)]
+
+    #         # End of signal?
+    #         if len(split) < int(min_duration * rate):
+    #             break
+
+    #         # Signal chunk too short? Fill with zeros.
+    #         if len(split) < int(rate * seconds):
+    #             temp = np.zeros((int(rate * seconds)))
+    #             temp[: len(split)] = split
+    #             split = temp
+
+    #         chunks.append(split)
+
+    #     self.chunks = chunks
+
+    #     print("read_audio_data: complete, read ", str(len(self.chunks)), "chunks.")
 
     def _load_audio_and_image(self, audio_output_path=None, image_output_path=None):
         self.duration = self._get_duration()
         
         filter_complex = (
             f"[0:a]{self.audio_filter_chain}[af];"
-            f"[af]asplit=2[af1][af2];[af1]{self.image_filter_chain},select=gte(n\,1),tile={int(self.fps * self.duration)}x1[v]"
+            f"[af]asplit=2[af1][af2];[af1]{self.image_filter_chain},select=gte(n\,1),tile={int(self.fps * self.duration)}x1,dilation,dilation,dilation,dilation,dilation,dilation,dilation,dilation,dilation[v]"
         )
 
         cmd = [
@@ -101,23 +125,12 @@ class BirdROI(RecordingBuffer):
                 # Decode audio and image bytes
                 self.audio = np.frombuffer(audio_bytes, dtype=np.float32)
                 self.image = cv2.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
-        
-        # For birdnetlib compliance        
-        self.buffer = self.audio
 
         return self.audio, self.image
 
-    def _preprocess_image(self, image):
-        # Apply gaussian blur, threshold and morphological operations
-        blurred = cv2.GaussianBlur(image, (7, 7), 0)
-        _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-        morphed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=1)
-        dilated = cv2.dilate(morphed, kernel, iterations=1)
-
+    def _convert_pix_to_freq(self, image, height):
         # Frequency remapping
-        height = dilated.shape[0]
-        preprocess_image = np.zeros_like(dilated)
+        converted_image = np.zeros_like(image)
         self._y_to_freq = np.zeros(height)
 
         for y in range(height):
@@ -136,80 +149,128 @@ class BirdROI(RecordingBuffer):
 
             y_lin = int((self.fmax - freq) / (self.fmax - self.fmin) * (height - 1))
             y_lin = np.clip(y_lin, 0, height - 1)
-            preprocess_image[y, :] = dilated[y_lin, :]
+            converted_image[y, :] = image[y_lin, :]
             self._y_to_freq[y] = freq
 
-        return preprocess_image
+        return converted_image
 
-    def extract_rois(self, min_duration=0.5, max_duration=None, margin_time=0.1, margin_freq=250, preprocess=True, plot=True):
+    def extract_rois(self, min_duration=0.5, max_duration=None, margin_time=0.1, margin_freq=250, plot=True):
         try:
-            if preprocess:
-                image = self._preprocess_image(self.image)
-            else:
-                image = self.image
- 
-            # Get the image height and width
-            height, width = image.shape[:2]
-            # Convert margin_time (s) and margin_freq (hz) to pixels
+            height, width = self.image.shape[:2]
+            image = self._convert_pix_to_freq(self.image, height)
+
             time_margin_px = int(margin_time * self.fps)
             freq_margin_px = int(margin_freq / (abs(self._y_to_freq[0] - self._y_to_freq[-1]) / height))
-            
-            # Find contours in the image
-            contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
-            # Filter contours based on duration and apply pixel-based margins
-            self.rois = []
-            plot_bounds = []
 
+            contours, _ = cv2.findContours(image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+            boxes = []
             for cnt in contours:
                 if cnt is None or len(cnt) == 0:
                     continue
-                
-                # Get bounding box for the contour
                 x, y, w, h = cv2.boundingRect(cnt.astype(np.int32))
-                
-                # Filter contours based on duration
                 duration_roi = w / self.fps
                 if duration_roi < min_duration or (max_duration is not None and duration_roi > max_duration):
                     continue
-                # Apply pixel-based margins
                 x_m = max(x - time_margin_px, 0)
                 w_m = min(w + 2 * time_margin_px, width - x_m)
                 y_m = max(y - freq_margin_px, 0)
                 h_m = min(h + 2 * freq_margin_px, height - y_m)
 
-                start = x_m / self.fps
-                end = (x_m + w_m) / self.fps
-                roi_fmin = self._y_to_freq[min(y_m + h_m, height - 1)]
-                roi_fmax = self._y_to_freq[max(y_m, 0)]
+                # Skip ROIs that span the entire image (both width and height)
+                if w_m >= width * 0.98 and h_m >= height * 0.98:
+                    continue
+
+                boxes.append((x_m, y_m, x_m + w_m, y_m + h_m))
+
+            self.rois = []
+            plot_bounds = []
+
+            for x1, y1, x2, y2 in boxes:
+                start = x1 / self.fps
+                end = x2 / self.fps
+                roi_fmin = self._y_to_freq[min(int(y2), height - 1)]
+                roi_fmax = self._y_to_freq[max(int(y1), 0)]
+
+                # Convert time to sample indices
+                start_sample = int(start * self.rate)
+                end_sample = int(end * self.rate)
+                self.buffer = self.audio[start_sample:end_sample]
+
+                self.extract_embeddings()
+                print(self.embeddings[0]['start_time'])
 
                 self.rois.append({
                     "file": self.audio_path,
                     "fmin": roi_fmin,
                     "fmax": roi_fmax,
                     "start": start,
-                    "end": end
+                    "end": end,
+                    "roi_audio": self.buffer
                 })
 
-                plot_bounds.append((x_m, y_m, w_m, h_m))
+                plot_bounds.append((x1, y1, x2 - x1, y2 - y1))
 
             if plot:
                 import matplotlib.pyplot as plt
                 import matplotlib.patches as patches
-                
+
                 fig, ax = plt.subplots()
                 ax.imshow(image, cmap="gray")
-                for x_m, y_m, w_m, h_m in plot_bounds:
-                    rect = patches.Rectangle((x_m, y_m), w_m, h_m, linewidth=2, edgecolor='lime', facecolor='none')
+                for x, y, w, h in plot_bounds:
+                    rect = patches.Rectangle((x, y), w, h, linewidth=2, edgecolor='lime', facecolor='none')
                     ax.add_patch(rect)
-                ax.set_title("Detected ROIs with Margins")
-                plt.show() 
+                ax.set_title("Detected ROIs with Bounding Boxes")
+                plt.show()
 
             return self.rois
 
         except Exception as e:
             print(f"❌ Failed to extract ROIs: {e}")
             return []
+
+    def plot_rois(self, figsize=(10, 6), box_color="red", box_linewidth=2):
+        import matplotlib.pyplot as plt
+        import librosa.display
+
+        # Load audio
+        y, sr = librosa.load(self.audio_path, sr=self.rate)
+        # Compute spectrum
+        if self.fscale == 'mel':
+            S = librosa.feature.melspectrogram(y=y, n_fft=self.n_fft, n_mels=32, hop_length=self.hop_length, fmax=self.fmax, fmin=self.fmin, sr=sr)
+        else:
+            S = librosa.stft(y, n_fft=self.n_fft, hop_length=self.hop_length)
+        S_db = librosa.amplitude_to_db(np.abs(S), ref=np.max)
+
+        _, ax = plt.subplots(figsize=figsize)
+        img = librosa.display.specshow(
+            S_db,
+            sr=sr,
+            hop_length=self.hop_length,
+            x_axis='time',
+            y_axis=self.fscale,
+            fmin=self.fmin,
+            fmax=self.fmax,
+            ax=ax
+        )
+        plt.colorbar(img, ax=ax, format="%+2.0f dB")
+
+        # Draw bounding boxes for ROIs
+        for roi in self.rois:
+            ax.add_patch(
+            plt.Rectangle(
+                (roi["start"], min(roi["fmin"], roi["fmax"])),
+                roi["end"] - roi["start"],
+                abs(roi["fmax"] - roi["fmin"]),
+                edgecolor=box_color,
+                facecolor='none',
+                linewidth=box_linewidth
+            )
+            )
+
+        ax.set_title("Spectrogram with ROI Bounding Boxes")
+        plt.tight_layout()
+        plt.show()   
         
     # def download_rois(self, output_dir="rois"):
     #     os.makedirs(output_dir, exist_ok=True)
@@ -240,60 +301,18 @@ class BirdROI(RecordingBuffer):
     #         try:
     #             subprocess.run(ffmpeg_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
     #         except subprocess.CalledProcessError as e:
-    #             print(f"⚠️ Failed to export ROI #{idx+1}: {e}")
-                
-    # def plot_rois(self, figsize=(10, 6), box_color="red", box_linewidth=2):
-    #     import matplotlib.pyplot as plt
-    #     import librosa.display
-
-    #     # Load audio
-    #     y, sr = librosa.load(self.audio_path, sr=self.rate)
-    #     # Compute spectrum
-    #     if self.fscale == 'mel':
-    #         S = librosa.feature.melspectrogram(y=y, n_fft=self.n_fft, n_mels=64, hop_length=self.hop_length, fmax=self.fmax, fmin=self.fmin, sr=sr)
-    #     else:
-    #         S = librosa.stft(y, n_fft=self.n_fft, hop_length=self.hop_length)
-    #     S_db = librosa.amplitude_to_db(np.abs(S), ref=np.max)
-
-    #     _, ax = plt.subplots(figsize=figsize)
-    #     img = librosa.display.specshow(
-    #         S_db,
-    #         sr=sr,
-    #         hop_length=self.hop_length,
-    #         x_axis='time',
-    #         y_axis=self.fscale,
-    #         fmin=self.fmin,
-    #         fmax=self.fmax,
-    #         ax=ax
-    #     )
-    #     plt.colorbar(img, ax=ax, format="%+2.0f dB")
-
-    #     # Draw bounding boxes for ROIs
-    #     for roi in self.rois:
-    #         ax.add_patch(
-    #         plt.Rectangle(
-    #             (roi["start"], min(roi["fmin"], roi["fmax"])),
-    #             roi["end"] - roi["start"],
-    #             abs(roi["fmax"] - roi["fmin"]),
-    #             edgecolor=box_color,
-    #             facecolor='none',
-    #             linewidth=box_linewidth
-    #         )
-    #         )
-
-    #     ax.set_title("Spectrogram with ROI Bounding Boxes")
-    #     plt.tight_layout()
-    #     plt.show()                
+    #             print(f"⚠️ Failed to export ROI #{idx+1}: {e}")             
 
 if __name__ == "__main__":
     import time
     
     start_time = time.time()
 
-    bird = BirdROI(audio_path="turdus.mp3", fscale="linear")
-    bird.extract_rois(min_duration=0.5, plot=False)
-                    
-    bird.extract_embeddings()
+    bird = BirdROI(audio_path="Turdus_iliacus/XC67249.wav", fscale="mel", fmin=150, fmax=10000)
+    bird.extract_rois(min_duration=0.5, plot=True)
+                  
+    # bird.extract_embeddings()
+    # print(bird.embeddings)
 
     end_time = time.time()
     execution_time = end_time - start_time
@@ -303,10 +322,12 @@ if __name__ == "__main__":
     # bird.download_rois()
 
     # "Turdus_iliacus/XC101610.wav"
+    # "SMA04635_20220318_182700.wav"
     
     # "Tinamus major/64136_24.00-27.00.wav"
     # "data/SMA04786_20220113_182200.wav"
     # "Nyctibius bracteatus/5071_3.00-6.00.wav"
+
 
 
 
