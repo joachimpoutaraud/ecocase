@@ -1,7 +1,0 @@
-# python=3.9
-
-birdnetlib==0.18.0
-tensorflow==2.15.0
-scikit-maad==1.5.1
-opencv-python
-librosa
