@@ -198,9 +198,8 @@ class ImageROI():
         
         
 class AudioROI(RecordingBuffer):
-    def __init__(self, analyzer, path, start=0.0, end=None, fmin=150, fmax=8000, rate=48000, min_duration=0.5):
+    def __init__(self, path, start=0.0, end=None, fmin=150, fmax=8000, rate=48000, min_duration=0.5):
         
-        self.analyzer = analyzer
         self.path = path
         self.start = start
         self.end = end
@@ -210,28 +209,32 @@ class AudioROI(RecordingBuffer):
         self.min_duration = min_duration
         
         # birdnetlib paramters
+        self.analyzer = Analyzer()
         self.sample_secs = 3.0
-        self.week_48=-1
-        self.date=None
-        self.sensitivity=1.0
-        self.lat=None
-        self.lon=None
-        self.min_conf = 0.1
+        self.week_48 = -1
+        self.date = None
+        self.sensitivity = 1.0
+        self.lat = None
+        self.lon = None
+        self.minimum_confidence = 0.1
         self.overlap = 0.0
-        self.return_all_detections=False
+        self.return_all_detections = False
+        self.extracted_audio_paths = {}
+        self.extracted_spectrogram_paths = {}
         
     def read_audio_data(self, audio_filter_chain=None):
         
         self.audio_filter_chain = audio_filter_chain or (
             f"aresample=resampler=soxr:out_sample_rate={self.rate},"
-            f"firequalizer=gain='if(lt(f,{self.fmin}),-INF,if(gt(f,{self.fmax}),-INF,0))',"
+            # f"highpass=f={self.fmin},lowpass=f={self.fmax},"
+            f"bandpass=f={(self.fmin + self.fmax) / 2}:width_type=h:w={self.fmax - self.fmin},"
             f"dynaudnorm=b=enabled"
         )
         
         # Create FFmpeg command
         cmd = [
             "ffmpeg", "-y", "-hide_banner", "-v", "error",
-            "-ss", str(self.start), "-t", str(self.end), "-i", self.path,
+            "-ss", str(self.start), "-t", str(self.end - self.start), "-i", self.path,
             "-filter_complex", self.audio_filter_chain,
             "-ac", "1", "-ar", str(self.rate), "-f", "f32le", "pipe:1"
             ]
@@ -240,7 +243,20 @@ class AudioROI(RecordingBuffer):
         with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
             audio_bytes, error = process.communicate()
             self.ndarray = np.frombuffer(audio_bytes, dtype=np.float32)
-            
+        
+        # import librosa
+        # import librosa.display
+        # import matplotlib.pyplot as plt
+        # # Compute the spectrogram
+        # D = librosa.amplitude_to_db(librosa.stft(self.ndarray), ref=np.max)
+        # # Plot it
+        # plt.figure(figsize=(10, 6))
+        # librosa.display.specshow(D, sr=self.rate, x_axis='time', y_axis='linear')
+        # plt.colorbar(format='%+2.0f dB')
+        # plt.title('Spectrogram')
+        # plt.tight_layout()
+        # plt.show()
+
         # Split audio into 3-second chunks
         self.chunks = []
         for i in range(0, len(self.ndarray), int((self.sample_secs - self.overlap) * self.rate)):
@@ -257,14 +273,6 @@ class AudioROI(RecordingBuffer):
                 split = temp
 
             self.chunks.append(split)
-        
-    def extract_rois(self, embeddings=True):
-        if embeddings:
-            self.extract_embeddings()
-        else:
-            self.embeddings = None
-        
-        return self.chunks, self.embeddings
 
 
 if __name__ == "__main__":
@@ -283,19 +291,53 @@ if __name__ == "__main__":
     #     image.detect_rois(min_duration=0.5, display=True)
         
     image = ImageROI(path="data/out.wav", fscale="mel", fmin=150, fmax=8000)
-    image.detect_rois(min_duration=0.5, display=True)
+    image.detect_rois(min_duration=0.5, display=False)
+    # print(len(image.rois))
     
+    s = [] 
+      
     for roi in image.rois:
-        analyzer = Analyzer()
         audio = AudioROI(
-                        analyzer=analyzer, path=roi['path'], 
+                        path=roi['path'], 
                         start=roi['start'], end=roi['end'], 
                         fmin=roi['fmin'], fmax=roi['fmax'], 
                         min_duration=roi['min_duration'], rate=roi['rate']
                         )
-                  
-        audio.extract_rois(embeddings=True)
+        
+        audio.analyze()
+        # audio.extract_embeddings()
+        
+        for i, det in enumerate(audio.detections):
+            if det['confidence'] > 0.8:
+                s.append(det['scientific_name'])
+        # print(audio.embeddings)                
 
+
+
+    # audio = AudioROI(
+    #                 path="data/out.wav", 
+    #                 start=0.0, end=120, 
+    #                 fmin=1, fmax=15000, 
+    #                 min_duration=0.5, rate=48000
+    #                 )
+    
+    # audio.analyze()
+    # # audio.extract_embeddings()
+    
+    # for i, det in enumerate(audio.detections):
+    #     if det['confidence'] > 0.8:
+    #         s.append(det['scientific_name'])
+
+
+                
+    from collections import Counter
+    # Count occurrences
+    string_counts = Counter(s)
+    # Print results
+    for string, count in string_counts.items():
+        print(f"{string}: {count}")
+        
+        
 
     end_time = time.time()
     execution_time = end_time - start_time
