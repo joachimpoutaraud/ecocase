@@ -1,3 +1,4 @@
+import os
 import subprocess
 import numpy as np
 
@@ -60,18 +61,18 @@ class ImageROI():
 
     def convert_audio_to_image(self, noise_profile=[0.0, 0.5], audio_filter_chain=None, image_filter_chain=None):
         
-        self.audio_filter_chain = audio_filter_chain or (
-            f"aresample=resampler=soxr:out_sample_rate={self.rate},"
-            f"highpass=f={self.fmin},lowpass=f={self.fmax},"
+        self.audio_filter_chain = audio_filter_chain or ",".join([
+            f"aresample=resampler=soxr:out_sample_rate={self.rate}",
+            f"highpass=f={self.fmin}", f"lowpass=f={self.fmax}",
             f"dynaudnorm=b=enabled"
-        )
+        ])
 
-        self.image_filter_chain = image_filter_chain or (
+        self.image_filter_chain = image_filter_chain or ",".join([
             f"showcwt=s=1x{self.n_fft}:slide=scroll:pps={self.hop_length}:"
             f"rate={self.fps}:deviation=10:min={self.fmin}:max={self.fmax}"
             # f"showspectrum=s=1x{self.n_fft}:slide=scroll:"
             # f"start={self.fmin}:stop={self.fmax}"
-        )
+        ])
 
         noise_start, noise_end = noise_profile[0], noise_profile[1]
         noise_profile_duration = noise_end - noise_start
@@ -198,7 +199,7 @@ class ImageROI():
         
         
 class AudioROI(RecordingBuffer):
-    def __init__(self, path, start=0.0, end=None, fmin=150, fmax=8000, rate=48000, min_duration=0.5):
+    def __init__(self, path, start=0.0, end=None, fmin=150, fmax=8000, rate=48000, min_duration=0.5, download=True):
         
         self.path = path
         self.start = start
@@ -207,6 +208,7 @@ class AudioROI(RecordingBuffer):
         self.fmax = fmax
         self.rate = rate
         self.min_duration = min_duration
+        self.download = download
         
         # birdnetlib paramters
         self.analyzer = Analyzer()
@@ -222,40 +224,43 @@ class AudioROI(RecordingBuffer):
         self.extracted_audio_paths = {}
         self.extracted_spectrogram_paths = {}
         
-    def read_audio_data(self, audio_filter_chain=None):
-        
-        self.audio_filter_chain = audio_filter_chain or (
-            f"aresample=resampler=soxr:out_sample_rate={self.rate},"
-            # f"highpass=f={self.fmin},lowpass=f={self.fmax},"
-            f"bandpass=f={(self.fmin + self.fmax) / 2}:width_type=h:w={self.fmax - self.fmin},"
-            f"dynaudnorm=b=enabled"
-        )
-        
-        # Create FFmpeg command
+
+
+    def read_audio_data(self, audio_filter_chain=None, noise_reduction=-25):
+        # Define the core audio filter chain
+        self.audio_filter_chain = audio_filter_chain or ",".join([
+            f"aresample=resampler=soxr:out_sample_rate={self.rate}",
+            f"firequalizer=gain='if(lt(f,{self.fmin}),{noise_reduction},if(gt(f,{self.fmax}),{noise_reduction},0))'",
+            "dynaudnorm=b=enabled"
+        ])
+
+        # Build the full filter graph
+        if self.download:
+            filter_complex = f"{self.audio_filter_chain},asplit=2[a1][a2]"
+        else:
+            filter_complex = f"{self.audio_filter_chain}"
+
+        # Build FFmpeg command
         cmd = [
             "ffmpeg", "-y", "-hide_banner", "-v", "error",
             "-ss", str(self.start), "-t", str(self.end - self.start), "-i", self.path,
-            "-filter_complex", self.audio_filter_chain,
-            "-ac", "1", "-ar", str(self.rate), "-f", "f32le", "pipe:1"
-            ]
-        
-        # Process FFmpeg command
+            "-filter_complex", filter_complex
+        ]
+
+        # Define roi path
+        filename = os.path.splitext(os.path.basename(self.path))[0]
+        self.roi_path = f"{filename}_t_{self.start}_{self.end}_f_{int(self.fmin)}_{int(self.fmax)}.wav"
+
+        # Map outputs
+        if self.download:
+            cmd += ["-map", "[a1]", "-f", "f32le", "pipe:1", "-map", "[a2]", "-f", "wav", self.roi_path]
+        else:
+            cmd += ["-f", "f32le", "pipe:1"]
+
+        # Run FFmpeg and read audio data
         with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
             audio_bytes, error = process.communicate()
             self.ndarray = np.frombuffer(audio_bytes, dtype=np.float32)
-        
-        # import librosa
-        # import librosa.display
-        # import matplotlib.pyplot as plt
-        # # Compute the spectrogram
-        # D = librosa.amplitude_to_db(librosa.stft(self.ndarray), ref=np.max)
-        # # Plot it
-        # plt.figure(figsize=(10, 6))
-        # librosa.display.specshow(D, sr=self.rate, x_axis='time', y_axis='linear')
-        # plt.colorbar(format='%+2.0f dB')
-        # plt.title('Spectrogram')
-        # plt.tight_layout()
-        # plt.show()
 
         # Split audio into 3-second chunks
         self.chunks = []
@@ -274,6 +279,20 @@ class AudioROI(RecordingBuffer):
 
             self.chunks.append(split)
 
+        
+        # import librosa
+        # import librosa.display
+        # import matplotlib.pyplot as plt
+        # # Compute the spectrogram
+        # D = librosa.amplitude_to_db(librosa.stft(self.ndarray), ref=np.max)
+        # # Plot it
+        # plt.figure(figsize=(10, 6))
+        # librosa.display.specshow(D, sr=self.rate, x_axis='time', y_axis='linear')
+        # plt.colorbar(format='%+2.0f dB')
+        # plt.title('Spectrogram')
+        # plt.tight_layout()
+        # plt.show()
+
 
 if __name__ == "__main__":
     # TODO For repertoire analysis noise profile need to be computed on the whole audio file not 3s segments, to be continued
@@ -290,8 +309,8 @@ if __name__ == "__main__":
     #     image = ImageROI(path=audio_file, fscale="mel", fmin=150, fmax=8000)
     #     image.detect_rois(min_duration=0.5, display=True)
         
-    image = ImageROI(path="data/out.wav", fscale="mel", fmin=150, fmax=8000)
-    image.detect_rois(min_duration=0.5, display=False)
+    image = ImageROI(path="out.wav", fscale="mel", fmin=150, fmax=8000)
+    image.detect_rois(min_duration=1.0, max_duration=None, display=False)
     # print(len(image.rois))
     
     s = [] 
@@ -301,21 +320,36 @@ if __name__ == "__main__":
                         path=roi['path'], 
                         start=roi['start'], end=roi['end'], 
                         fmin=roi['fmin'], fmax=roi['fmax'], 
-                        min_duration=roi['min_duration'], rate=roi['rate']
+                        min_duration=roi['min_duration'], rate=roi['rate'],
+                        download=False
                         )
         
-        audio.analyze()
-        # audio.extract_embeddings()
+        # audio.analyze()
         
-        for i, det in enumerate(audio.detections):
-            if det['confidence'] > 0.8:
-                s.append(det['scientific_name'])
-        # print(audio.embeddings)                
+        # for i, det in enumerate(audio.detections):
+        #     if det['confidence'] > 0.5:
+        #         s.append(det['scientific_name'])
+
+        audio.extract_embeddings()
+        
+# # '        print(len(audio.embeddings[0]))
+
+# #         print(audio.embeddings[0])
+
+#         for emb in audio.embeddings_list:
+#             print(emb)
+#             # Add file path to each dictionary and update start and end time
+#             emb['start_time'] = audio.start + emb['start_time']
+#             emb['end_time'] = emb['start_time'] + emb['end_time']
+#             emb['path'] = audio.path
+        
+        print(audio.embeddings_list)              
 
 
 
+    # s = []
     # audio = AudioROI(
-    #                 path="data/out.wav", 
+    #                 path="out.wav", 
     #                 start=0.0, end=120, 
     #                 fmin=1, fmax=15000, 
     #                 min_duration=0.5, rate=48000
@@ -325,7 +359,7 @@ if __name__ == "__main__":
     # # audio.extract_embeddings()
     
     # for i, det in enumerate(audio.detections):
-    #     if det['confidence'] > 0.8:
+    #     if det['confidence'] > 0.5:
     #         s.append(det['scientific_name'])
 
 
