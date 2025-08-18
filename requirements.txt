@@ -4,3 +4,4 @@ birdnetlib==0.18.0
 tensorflow==2.15.0
 opencv-python
 librosa
+tqdm
