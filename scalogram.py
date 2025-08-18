@@ -290,7 +290,6 @@ class AudioROI(RecordingBuffer):
             data = np.array([sample], dtype="float32")
             # Extract embeddings with birdnetlib function
             roi_embeddings = self.analyzer._return_embeddings(data)[0].tolist()
-            roi_embeddings = []
 
             if predict:
                 import operator
@@ -330,11 +329,10 @@ if __name__ == "__main__":
     #     image = ImageROI(path=audio_file, fscale="mel", fmin=150, fmax=8000)
     #     image.detect_rois(min_duration=0.5, display=True)
         
-    image = ImageROI(path="SMA04635_20220318_182700.wav", fscale="mel", fmin=150, fmax=8000)
+    image = ImageROI(path="out.wav", fscale="mel", fmin=150, fmax=8000)
     image.detect_rois(min_duration=1.0, max_duration=10.0, display=False)
-    # print(len(image.rois))
+    print(f"Found {len(image.rois)} ROIs in {image.path}\n")
     
-
     roi_embeddings = [] 
     for roi in tqdm(image.rois, desc="Extracting embeddings"):
         audio = AudioROI(
