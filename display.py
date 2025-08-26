@@ -1,206 +1,223 @@
-import os
-os.environ['OMP_NUM_THREADS'] = '1'
-os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+from bokeh.plotting import figure
+from bokeh.models import ColumnDataSource, Button, Div, CustomJS, TapTool
 
+from bokeh.layouts import column, row
+from bokeh.palettes import Category20
+from bokeh.server.server import Server
 import numpy as np
 import pandas as pd
-from IPython import get_ipython
-
 import umap
-from bokeh.plotting import figure, output_file, show
-from bokeh.models import ColumnDataSource, HoverTool
-from bokeh.transform import factor_cmap
-from bokeh.palettes import Category20
+import io
+import base64
 
-import warnings
-warnings.filterwarnings(action="ignore")
-import config as cfg
+import matplotlib.pyplot as plt
+from scipy.io import wavfile
+from scipy.signal import spectrogram
 
+def interactive_display(embeddings, labels, frame_width=1000, frame_height=600, point_size=5, port=5006):
 
-# def create_thumbnails(row, save_path, encode=False):
-#     import librosa
-#     import librosa.display
-#     import matplotlib.pyplot as plt
-#     from io import BytesIO
-#     import base64
-#     import soundfile as sf
-#     import os
+    def render_roi_base64(path, tmin, tmax, mode='audio'):
+        """
+        Read a region-of-interest (ROI) from `path` (wav file) between tmin and tmax (seconds)
+        and return either an audio data URI or a spectrogram <img/> HTML string.
 
-#     # TODO update spectrogram with FFmpeg and add option only audio or image
-#     y, sr = load_audio(path=row.file, sr=16000, offset=row.start, duration=row.end-row.start, fmin=row.fmin, fmax=row.fmax, denoise=False, noise_profile=None)
+        mode: 'audio' or 'spectrogram'
+        """
+        # Read file
+        rate, data = wavfile.read(path)
+        total_samples = data.shape[0]
+        duration = total_samples / float(rate)
 
-#     S = librosa.feature.melspectrogram(y=y, sr=sr)
-#     S_db = librosa.power_to_db(S, ref=np.max)
-#     plt.figure(figsize=(4, 2))
-#     librosa.display.specshow(S_db, sr=sr, x_axis='time', y_axis='mel')
-#     plt.axis('off')
+        # Clamp times
+        tmin = max(0.0, min(tmin, duration))
+        tmax = max(tmin, min(tmax, duration))
+
+        start_sample = int(tmin * rate)
+        end_sample = int(tmax * rate)
+        if end_sample <= start_sample:
+            end_sample = min(start_sample + 1, total_samples)
+
+        roi = data[start_sample:end_sample]
+
+        # If stereo, convert to mono
+        if getattr(roi, "ndim", 1) > 1:
+            roi = roi.mean(axis=1)
+
+        result_audio = None
+        result_img = None
+
+        if mode == 'audio':
+            # Ensure integer PCM for wav write: convert floats to int16
+            roi_audio = roi
+            if roi_audio.dtype.kind == 'f':
+                # normalize if in -1..1 range, otherwise scale safely
+                max_abs = np.max(np.abs(roi_audio)) if roi_audio.size else 1.0
+                scale = 32767.0 / max(1e-9, max_abs)
+                roi_audio = (roi_audio * scale).astype(np.int16)
+            elif roi_audio.dtype.kind in ('i', 'u'):
+                # Cast to int16 if larger than int16 to keep compatibility
+                if roi_audio.dtype.itemsize > 2:
+                    roi_audio = roi_audio.astype(np.int16)
+
+            buf = io.BytesIO()
+            wavfile.write(buf, rate, roi_audio)
+            buf.seek(0)
+            b64 = base64.b64encode(buf.read()).decode('ascii')
+            result_audio = f"data:audio/wav;base64,{b64}"
+
+            return result_audio
+
+        if mode == 'spectrogram':
+            # compute spectrogram and render to PNG (grayscale)
+            f, t, Sxx = spectrogram(roi, fs=rate)
+            # convert to dB safely (use power)
+            Sxx_db = 10 * np.log10(np.abs(Sxx)**2 + 1e-10)
+
+            plt.figure(figsize=(6, 4))
+            plt.pcolormesh(t, f, Sxx_db, shading='auto', cmap='gray')
+            plt.ylabel('Frequency [Hz]')
+            plt.xlabel('Time [sec]')
+            plt.title('Spectrogram')
+            buf_img = io.BytesIO()
+            plt.savefig(buf_img, format='png', bbox_inches='tight', pad_inches=0)
+            plt.close()
+            buf_img.seek(0)
+            img_b64 = base64.b64encode(buf_img.read()).decode('ascii')
+            result_img = f'<img src="data:image/png;base64,{img_b64}" />'
+
+            return result_img
         
-#     if encode:
-#         # Encode image
-#         img_buf = BytesIO()
-#         plt.savefig(img_buf, format='png')
-#         img_buf.seek(0)
-#         img_str = base64.b64encode(img_buf.read()).decode('utf-8')
-#         plt.close()
+        else:
+            raise ValueError("mode must be either 'audio' or 'spectrogram'")
 
-#         # Encode audio
-#         audio_buf = BytesIO()
-#         sf.write(audio_buf, y, sr, format='wav')
-#         audio_buf.seek(0)
-#         audio_str = base64.b64encode(audio_buf.read()).decode('utf-8')
+    def modify_doc(doc):
+        # Prepare embeddings
+        X = np.array([item['embeddings'] for item in embeddings])
+        X = np.nan_to_num(X)
 
-#         return f'data:image/png;base64,{img_str}', f'data:audio/wav;base64,{audio_str}'
-    
-#     else:           
-#         if save_path is None:
-#             save_path = os.getcwd()
-        
-#         save_path = os.path.join(save_path, 'thumbnails')
-#         # Check if the folder exists, and create it if it doesn't
-#         if not os.path.exists(save_path):
-#             os.makedirs(save_path) 
+        if X.shape[1] > 2:
+            reducer = umap.UMAP(n_components=2, metric='cosine', random_state=2025, transform_seed=2025)
+            labels_arr = np.asarray(labels).astype(str)
+            mask = labels_arr != 'Unknown'
+            y = np.full(labels_arr.shape, -1, dtype=int)
+            if mask.any():
+                y_masked = pd.factorize(labels_arr[mask])[0]
+                y[mask] = y_masked
+            X = reducer.fit_transform(X, y=y)
 
-#         # Check if row.file is a URL or a local file
-#         if str(row.file).startswith(('http://', 'https://')):
-#             filename = os.path.splitext(os.path.basename(os.path.dirname(row.file)))[0]
-#         else:
-#             filename = os.path.splitext(os.path.basename(row.file))[0]
+        labels_arr = np.array(labels).astype(str)
+        unique_labels = np.unique(labels_arr).astype(str).tolist()
+        x, y = X[:, 0], X[:, 1]
 
-#         # Save image to disk
-#         img_filename = f"{str(filename)}_{str(row.start)}_{str(row.end)}_{str(row.fmin)}_{str(row.fmax)}.png"
-#         plt.savefig(os.path.join(save_path, img_filename), format='png', bbox_inches='tight', pad_inches=0)
-#         plt.close()
+        label_to_idx = {lbl: i for i, lbl in enumerate(unique_labels)}
+        try:
+            colors = Category20[len(unique_labels)]
+        except:
+            colors = Category20[20]
 
-#         # Save audio to disk
-#         audio_filename = f"{str(filename)}_{str(row.start)}_{str(row.end)}_{str(row.fmin)}_{str(row.fmax)}.wav"
-#         sf.write(os.path.join(save_path, audio_filename), y, sr, format='wav')
+        palette = colors if len(colors) >= len(unique_labels) else (colors * ((len(unique_labels) // len(colors)) + 1))
+        color_list = [palette[label_to_idx[lbl]] for lbl in labels_arr]
+        size_list = [point_size if lbl == 'Unknown' else point_size * 3 for lbl in labels_arr]
 
-#         # Only return file paths from thumbnails folder for writing html file
-#         return os.path.join('thumbnails', img_filename), os.path.join('thumbnails', audio_filename)
+        source = ColumnDataSource(data=dict(
+            x=x, y=y, label=labels_arr, audio=[""] * len(embeddings), 
+            path=[emb['path'] for emb in embeddings],
+            tmin=[emb['tmin'] for emb in embeddings],
+            tmax=[emb['tmax'] for emb in embeddings],
+            color=color_list, size=size_list
+        ))
+
+        # Create the figure with TapTool enabled and wheel zoom active by default
+        p = figure(
+            frame_width=frame_width,
+            frame_height=frame_height,
+            title="Interactive scatter plot",
+            tools="pan,wheel_zoom,reset,tap,box_select,lasso_select",
+            active_scroll='wheel_zoom'
+        )
+
+        # Scatter plot
+        p.scatter('x', 'y', size='size', color='color', source=source, legend_field='label', alpha=0.95)
+        p.legend.location = "top_right"
+        p.legend.click_policy = "hide"
+
+        # TapTool setup
+        taptool = p.select(type=TapTool)
+        taptool.callback = CustomJS(args=dict(source=source), code="""
+            const selected_index = source.selected.indices[0];
+            console.log("Selected index:", selected_index);
+        """)
+
+        audio_div = Div(text="")      
+        spectrogram_div = Div(text="")
+
+        def make_on_click(mode):
+            def _on_click():
+                selected = source.selected.indices
+                if not selected:
+                    return
+
+                if mode == 'audio':
+                    audio_players_html = '<div style="text-align: center;">'
+                    for idx in selected:
+                        path = source.data['path'][idx]
+                        tmin = source.data['tmin'][idx]
+                        tmax = source.data['tmax'][idx]
+                        result = render_roi_base64(path, tmin, tmax, mode='audio')
+                        audio_players_html += f'<audio controls src="{result}"></audio><br/>'
+                        audio_players_html += '</div>'
+
+                    audio_div.text = audio_players_html
+                    spectrogram_div.text = ""
+
+                else:  # spectrogram
+                    imgs_html = '<div style="text-align: center;">'
+                    for idx in selected:
+                        path = source.data['path'][idx]
+                        tmin = source.data['tmin'][idx]
+                        tmax = source.data['tmax'][idx]
+                        result = render_roi_base64(path, tmin, tmax, mode='spectrogram')
+                        imgs_html += result + "<br/>"
+                        imgs_html += '</div>'
+
+                    spectrogram_div.text = imgs_html
+                    audio_div.text = ""
+            return _on_click
+
+        spectrogram_button = Button(label="Show spectrogram", button_type="primary")
+        spectrogram_button.on_click(make_on_click('spectrogram'))
+
+        audio_button = Button(label="Play audio", button_type="success")
+        audio_button.on_click(make_on_click('audio'))
+
+        p.sizing_mode = "stretch_width"
+        audio_div.sizing_mode = "stretch_width"
+        spectrogram_div.sizing_mode = "stretch_width"
+
+        # Wrap each component in a row with align="center"
+        centered_plot = row(p, align="center")
+        centered_buttons = row(audio_button, spectrogram_button, align="center")
+        centered_audio = row(audio_div, align="center")
+        centered_spectrogram = row(spectrogram_div, align="center")
+
+        # Final layout
+        layout = column(
+            centered_plot,
+            centered_buttons,
+            centered_audio,
+            centered_spectrogram,
+            sizing_mode="stretch_width",  
+        )
+
+        doc.add_root(layout)
+
+    server = Server({'/': modify_doc}, port=port, allow_websocket_origin=[f"localhost:{port}"])
+    server.start()
+    print(f"Interactive display accessible at http://localhost:{port}")
+    server.io_loop.start()
 
 
-def interactive_display(embeddings, labels, thumbnails=True, encode=False, frame_width=1000, frame_height=600, point_size=5, html_filename='scatterplot.html'):  
 
-    # Get the embeddings    
-    X = np.array([item['embeddings'] for item in embeddings])
-    # Remove potential NaN values from the dataset
-    X = np.nan_to_num(X)
 
-    if X.shape[1] > 2:
-        # Fit the UMAP model and transform the data
-        reducer = umap.UMAP(n_components=2, metric='euclidean', random_state=2025)
-        labels_arr = np.asarray(labels).astype(str)
-        mask = labels_arr != 'Unknown'
-        y = np.full(labels_arr.shape, -1, dtype=int)
-        if mask.any():
-            y_masked = pd.factorize(labels_arr[mask])[0]
-            y[mask] = y_masked
 
-        X = reducer.fit_transform(X, y=y)
 
-    # Get the unique cluster labels and try to get optimal color number
-    unique_clusters = np.unique(labels).astype(str).tolist()
-    x, y = X[:, 0], X[:, 1]
-
-    try:
-        colors = Category20[len(unique_clusters)]
-    except:
-        colors = Category20[20]
-        
-    mapper = factor_cmap(field_name='label', palette=colors, factors=unique_clusters)
-
-    if 'ZMQInteractiveShell' in get_ipython().__class__.__name__:
-        from bokeh.io import output_notebook
-        output_notebook() 
-    
-    # if thumbnails:
-    #     from concurrent.futures import ProcessPoolExecutor
-    #     from tqdm import tqdm
-    #     import os
-        
-    #     spectrograms, audio_files = [], []
-
-    #     with tqdm(total=len(df), desc="Process image and audio thumbnails") as pbar: 
-    #         with ProcessPoolExecutor(max_workers=cfg.CPU_THREADS) as executor:
-    #             futures = [executor.submit(create_thumbnails, row, save_path, encode) for _, row in df.iterrows()]
-            
-    #             for future in futures:
-    #                 pbar.update(1)
-    #                 try:
-    #                     img_str, audio_file = future.result()
-    #                     spectrograms.append(img_str)
-    #                     audio_files.append(audio_file)
-    #                 except:
-    #                     pass
-
-    #     data_dict = dict(x=x, 
-    #              y=y, 
-    #              label=labels.astype(str).tolist(), 
-    #              spectrogram=spectrograms, 
-    #              audio=audio_files, 
-    #              filename=audio_files)
-
-    #     tooltips = """
-    #         <div>
-    #         <div>
-    #             <img src="@spectrogram" height="200" width="200" border="1" style="float: left; margin: 0px 15px 15px 0px;"></img>
-    #         </div>
-    #         <div style="font-size: 12px; color: #966;">Filename: @filename</div>
-    #         <div style="font-size: 12px; color: #966;">Label: @label</div>
-    #     """
-
-    #     if set(['lat', 'lng']).issubset(df.columns):
-    #         data_dict.update(lat=df['lat'].astype(str).tolist(), 
-    #                  lng=df['lng'].astype(str).tolist())
-    #         tooltips += """
-    #         <div style="font-size: 12px; color: #966;">Latitude: @lat</div>
-    #         <div style="font-size: 12px; color: #966;">Longitude: @lng</div>
-    #         """
-            
-    #     if 'confidence' in df.columns:
-    #         data_dict.update(confidence=df['confidence'].to_numpy())
-    #         tooltips += """
-    #         <div style="font-size: 12px; color: #966;">Confidence: @confidence</div>
-    #         """
-
-    #     tooltips += """
-    #         </div>
-    #         <div>
-    #             <audio autoplay controls style="width: 200px;">
-    #             <source src="@audio" type="audio/wav">
-    #             Your browser does not support the audio element.
-    #             </audio>
-    #         </div>
-    #         </div>
-    #     """
-
-    #     source = ColumnDataSource(data=data_dict)
-    #     hover = HoverTool(tooltips=tooltips)
-
-    #     p = figure(frame_width=frame_width, frame_height=frame_height, title=f"{cfg.METHOD} interactive scatter plot with spectrograms and audio", tools="pan,wheel_zoom,reset")
-    #     if 'confidence' in df.columns and 'confidence' in source.data:
-    #         p.scatter('x', 'y', size=point_size, color=mapper, fill_alpha='confidence', source=source)
-    #     else:
-    #         p.scatter('x', 'y', size=point_size, color=mapper, source=source)
-    #     p.add_tools(hover)
-        
-    # else:
-    labels_arr = np.array(labels).astype(str)
-    unique_labels = np.unique(labels_arr).tolist()
-    # Ensure we have enough colors (repeat if necessary)
-    palette = colors if len(colors) >= len(unique_labels) else (colors * ((len(unique_labels) // len(colors)) + 1))
-
-    p = figure(frame_width=frame_width, frame_height=frame_height, title=f"{cfg.METHOD} interactive scatter plot", tools="pan,wheel_zoom,reset")
-
-    for i, lbl in enumerate(unique_labels):
-        mask = labels_arr == lbl
-        if not np.any(mask):
-            continue
-        src = ColumnDataSource(data=dict(x=x[mask], y=y[mask], label=[lbl] * mask.sum()))
-        p.scatter('x', 'y', size=point_size, color=palette[i], source=src, legend_label=str(lbl))
-
-    p.legend.location = "top_right"
-    p.legend.click_policy = "hide"
-
-    output_file(html_filename)
-    show(p)

@@ -21,7 +21,7 @@ def suppress_output():
             sys.stdout, sys.stderr = old_stdout, old_stderr
 
 class ImageROI():
-    def __init__(self, path, rate=48000, fmin=150, fmax=8000, fps=50, 
+    def __init__(self, path, rate=48000, fmin=1, fmax=15000, fps=50, 
                  fscale="mel", n_fft=512, hop_length=128):
         
         self.path = path
@@ -254,8 +254,8 @@ class AudioROI(RecordingBuffer):
             output_folder = "rois"
             os.makedirs(output_folder, exist_ok=True)
             filename_roi = f"{filename}_t_{self.tmin}_{self.tmax}_f_{int(self.fmin)}_{int(self.fmax)}.wav"
-            output_path = os.path.join(output_folder, filename_roi)
-            cmd += ["-map", "[a1]", "-f", "f32le", "pipe:1", "-map", "[a2]", "-f", "wav", output_path]
+            self.output_path = os.path.join(output_folder, filename_roi)
+            cmd += ["-map", "[a1]", "-f", "f32le", "pipe:1", "-map", "[a2]", "-f", "wav", self.output_path]
         else:
             cmd += ["-f", "f32le", "pipe:1"]
 
@@ -266,52 +266,50 @@ class AudioROI(RecordingBuffer):
 
         # Process audio rois into 3-second chunks for birdnetlib compatibility
         self.sample_secs = 3.0
-        self.chunks = []
-        for i in range(0, len(self.ndarray), int((self.sample_secs) * self.rate)):
-            split = self.ndarray[i : i + int(self.sample_secs * self.rate)]
+        self.chunks = []  # will store dicts: {"samples": arr, "start_idx": int}
+        total_samples = int(self.sample_secs * self.rate)
+
+        for i in range(0, len(self.ndarray), total_samples):
+            split = self.ndarray[i : i + total_samples]
 
             # End of signal?
             if len(split) < int(self.min_duration * self.rate):
                 break
 
+            # Default start index for this chunk (relative to the extracted ROI audio)
+            start_idx = i
+
             # Signal chunk too short? Center the split using audio file
-            if len(split) < int(self.rate * self.sample_secs):
-                # Calculate the number of samples needed
-                total_samples = int(self.rate * self.sample_secs)
+            if len(split) < total_samples:
                 # Find the center position in the original audio
                 start_idx = max(0, i - (total_samples - len(split)) // 2)
-                end_idx = start_idx + total_samples
                 # Clip indices to valid range
                 start_idx = max(0, min(start_idx, len(self.ndarray) - total_samples))
                 end_idx = start_idx + total_samples
                 split = self.ndarray[start_idx:end_idx]
-                # If still not enough samples (e.g. at the end), pad with zeros
+                # If still not enough samples (e.g. entire file shorter than total_samples), pad with zeros
                 if len(split) < total_samples:
-                    temp = np.zeros(total_samples)
+                    temp = np.zeros(total_samples, dtype=self.ndarray.dtype)
                     temp[:len(split)] = split
                     split = temp
 
-            # # Signal chunk too short? Pad with zeros.
-            # if len(split) < int(self.rate * self.sample_secs):
-            #     temp = np.zeros((int(self.rate * self.sample_secs)))
-            #     temp[: len(split)] = split
-            #     split = temp
-
-            self.chunks.append(split)
+            # Append chunk along with its start index (relative to the ROI audio)
+            self.chunks.append({"samples": split, "start_idx": start_idx})
 
     def extract_embeddings(self, predict=True, min_confidence=0.5):
-        tmin = self.tmin
-        tmax = tmin + self.sample_secs
-
+        self.min_confidence = min_confidence
         self.emb = []
-        for c in self.chunks:
-            # Extract embeddings with birdnetlib function and append dict to list
-            e = self.analyzer._return_embeddings(np.array([c], dtype="float32"))[0].tolist()
-            # e = []
 
-            # Increment tmin and tmax
-            tmin += self.sample_secs
-            tmax = tmin + self.sample_secs
+        for chunk in self.chunks:
+            c = chunk["samples"]
+            start_idx = chunk["start_idx"]
+
+            # compute tmin/tmax for this chunk using the stored start index
+            tmin_chunk = self.tmin + (start_idx / float(self.rate))
+            tmax_chunk = tmin_chunk + self.sample_secs
+
+            # Extract embeddings with birdnetlib function
+            e = self.analyzer._return_embeddings(np.array([c], dtype="float32"))[0].tolist()
 
             if predict:
                 import operator
@@ -320,19 +318,41 @@ class AudioROI(RecordingBuffer):
                 p_labels = dict(zip(self.analyzer.labels, pred))
                 # Sort by score
                 p_sorted = sorted(p_labels.items(), key=operator.itemgetter(1), reverse=True)
-                # Filter by recording.minimum_confidence so not to needlessly store full 8K array for each chunk.
+                # Filter by minimum confidence
                 p_sorted = [i for i in p_sorted if i[1] >= min_confidence]
-
-                # if len(p_sorted) != 0:
-                #     print(p_sorted[0])
 
                 # Append results
                 if len(p_sorted) == 0:
-                    self.emb.append({"path": self.path, "tmin": tmin, "tmax": tmax, "fmin": round(self.fmin,2), "fmax": round(self.fmax,2), "embeddings": e, "prediction": "Unknown", "confidence": 0.0})
+                    self.emb.append({
+                        "path": self.path,
+                        "tmin": tmin_chunk,
+                        "tmax": tmax_chunk,
+                        "fmin": round(self.fmin, 2),
+                        "fmax": round(self.fmax, 2),
+                        "embeddings": e,
+                        "prediction": "Unknown",
+                        "confidence": 0.0
+                    })
                 else:
-                    self.emb.append({"path": self.path, "tmin": tmin, "tmax": tmax, "fmin": round(self.fmin,2), "fmax": round(self.fmax,2), "embeddings": e, "prediction": p_sorted[0][0], "confidence": p_sorted[0][1]})
+                    self.emb.append({
+                        "path": self.path,
+                        "tmin": tmin_chunk,
+                        "tmax": tmax_chunk,
+                        "fmin": round(self.fmin, 2),
+                        "fmax": round(self.fmax, 2),
+                        "embeddings": e,
+                        "prediction": p_sorted[0][0],
+                        "confidence": p_sorted[0][1]
+                    })
             else:
-                self.emb.append({"path": self.path, "tmin": tmin, "tmax": tmax, "fmin": round(self.fmin,2), "fmax": round(self.fmax,2), "embeddings": e})
+                self.emb.append({
+                    "path": self.path,
+                    "tmin": tmin_chunk,
+                    "tmax": tmax_chunk,
+                    "fmin": round(self.fmin, 2),
+                    "fmax": round(self.fmax, 2),
+                    "embeddings": e
+                })
 
 
 if __name__ == "__main__":
@@ -348,14 +368,16 @@ if __name__ == "__main__":
     # folder_path = Path("test")
     # # Iterate over all .wav files in the folder
     # rois = []
-    # for audio_file in folder_path.glob("*.wav"):
+    # for audio_file in sorted(folder_path.iterdir()):
+    #     if audio_file.suffix.lower() not in {'.wav', '.mp3', '.flac'}:
+    #         continue
     #     print(audio_file)
-    #     image = ImageROI(path=audio_file, fscale="mel", fmin=1, fmax=15000)
+    #     image = ImageROI(path=str(audio_file), fscale="mel", fmin=1, fmax=15000)
     #     image.detect_rois(min_duration=0.5, max_duration=10.0, display=False)
     #     rois.extend(image.rois)
         
     ### DETECT ROIS ON SPECTROGRAM IMAGE
-    image = ImageROI(path="SMA04635_20220318_182700.wav", fscale="mel", fmin=1000, fmax=8000)
+    image = ImageROI(path="out.wav", fscale="mel", fmin=1, fmax=15000)
     image.detect_rois(min_duration=0.5, max_duration=10.0, display=False)
     rois = image.rois
     
@@ -371,7 +393,7 @@ if __name__ == "__main__":
                          )
 
         audio.segment_rois(download=False, noise_reduction=-20)
-        audio.extract_embeddings(min_confidence=0.9)
+        audio.extract_embeddings(min_confidence=0.75)
         # Append audio embeddings
         embeddings.append(audio.emb)
 
@@ -383,7 +405,7 @@ if __name__ == "__main__":
     # Print unique detected species with counts, sorted by frequency
     unique_species, counts = np.unique(predictions, return_counts=True)
     order = np.argsort(-counts)
-    print("\nDetected species:")
+    print(f"\nDetected species (min_confidence={audio.min_confidence}):")
     for i in order:
         print(f"{unique_species[i]}: {counts[i]}")
 
@@ -454,7 +476,7 @@ if __name__ == "__main__":
 
     
     from display import interactive_display
-    interactive_display(embeddings, predictions)
+    interactive_display(embeddings, predictions, port=5006)
 
 
 
