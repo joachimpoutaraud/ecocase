@@ -148,65 +148,65 @@ def interactive_display(embeddings, labels, frame_width=1000, frame_height=600, 
             console.log("Selected index:", selected_index);
         """)
 
-        audio_div = Div(text="")      
+        audio_div = Div(text="")
         spectrogram_div = Div(text="")
 
-        def make_on_click(mode):
-            def _on_click():
-                selected = source.selected.indices
-                if not selected:
-                    return
+        def show_roi():
+            selected = source.selected.indices
+            if not selected:
+                return
 
-                if mode == 'audio':
-                    audio_players_html = '<div style="text-align: center;">'
-                    for idx in selected:
-                        path = source.data['path'][idx]
-                        tmin = source.data['tmin'][idx]
-                        tmax = source.data['tmax'][idx]
-                        result = render_roi_base64(path, tmin, tmax, mode='audio')
-                        audio_players_html += f'<audio controls src="{result}"></audio><br/>'
-                        audio_players_html += '</div>'
+            combined_html = ''
+            row_open = False
 
-                    audio_div.text = audio_players_html
-                    spectrogram_div.text = ""
+            for i, idx in enumerate(selected):
+                if i % 3 == 0:
+                    if row_open:
+                        combined_html += '</div>'
+                    combined_html += '<div style="display: flex; justify-content: center; margin-bottom: 20px;">'
+                    row_open = True
 
-                else:  # spectrogram
-                    imgs_html = '<div style="text-align: center;">'
-                    for idx in selected:
-                        path = source.data['path'][idx]
-                        tmin = source.data['tmin'][idx]
-                        tmax = source.data['tmax'][idx]
-                        result = render_roi_base64(path, tmin, tmax, mode='spectrogram')
-                        imgs_html += result + "<br/>"
-                        imgs_html += '</div>'
+                path = source.data['path'][idx]
+                tmin = source.data['tmin'][idx]
+                tmax = source.data['tmax'][idx]
 
-                    spectrogram_div.text = imgs_html
-                    audio_div.text = ""
-            return _on_click
+                spectrogram_result = render_roi_base64(path, tmin, tmax, mode='spectrogram')
+                audio_result = render_roi_base64(path, tmin, tmax, mode='audio')
 
-        spectrogram_button = Button(label="Show spectrogram", button_type="primary")
-        spectrogram_button.on_click(make_on_click('spectrogram'))
+                combined_html += f'''
+                    <div style="display: flex; flex-direction: column; align-items: center; margin: 10px;">
+                        {spectrogram_result}
+                        <audio controls src="{audio_result}"></audio>
+                    </div>
+                '''
 
-        audio_button = Button(label="Play audio", button_type="success")
-        audio_button.on_click(make_on_click('audio'))
+            if row_open:
+                combined_html += '</div>'  # Close final row
 
+            spectrogram_div.text = combined_html
+            audio_div.text = ""  # Clear audio_div since it's merged
+
+        # Single button
+        roi_button = Button(label="Show ROI", button_type="primary")
+        roi_button.on_click(show_roi)
+
+        # Sizing
         p.sizing_mode = "stretch_width"
         audio_div.sizing_mode = "stretch_width"
         spectrogram_div.sizing_mode = "stretch_width"
 
-        # Wrap each component in a row with align="center"
+        # Layout
         centered_plot = row(p, align="center")
-        centered_buttons = row(audio_button, spectrogram_button, align="center")
+        centered_button = row(roi_button, align="center")
         centered_audio = row(audio_div, align="center")
         centered_spectrogram = row(spectrogram_div, align="center")
 
-        # Final layout
         layout = column(
             centered_plot,
-            centered_buttons,
+            centered_button,
             centered_audio,
             centered_spectrogram,
-            sizing_mode="stretch_width",  
+            sizing_mode="stretch_width",
         )
 
         doc.add_root(layout)
