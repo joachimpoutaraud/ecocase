@@ -360,12 +360,11 @@ if __name__ == "__main__":
     # TODO Create predict_cluster function to predict the clusters
 
     from tqdm import tqdm
-    # import time
-    # start_time = time.time()
+    from display import display_rois
 
     # # Set the folder path
     # from pathlib import Path
-    # folder_path = Path("test")
+    # folder_path = Path("chloris")
     # # Iterate over all .wav files in the folder
     # rois = []
     # for audio_file in sorted(folder_path.iterdir()):
@@ -379,6 +378,7 @@ if __name__ == "__main__":
     ### DETECT ROIS ON SPECTROGRAM IMAGE
     image = ImageROI(path="out.wav", fscale="mel", fmin=1, fmax=15000)
     image.detect_rois(min_duration=0.5, max_duration=10.0, display=False)
+    # Get the region of interests
     rois = image.rois
     
     ### SEGMENT ROIS AND EXTRACT EMBEDDINGS
@@ -392,22 +392,29 @@ if __name__ == "__main__":
                          rate=roi['rate']
                          )
 
-        audio.segment_rois(download=False, noise_reduction=-20)
+        audio.segment_rois(noise_reduction=-20)
         audio.extract_embeddings(min_confidence=0.75)
         # Append audio embeddings
         embeddings.append(audio.emb)
 
-    embeddings = [item for sublist in embeddings for item in sublist]  # Flatten the list
+    ### DISPLAY ROIS
+    display_rois(embeddings)
 
-    predictions = np.array([item.get('prediction') for item in embeddings])
-    confidence = np.array([item.get('confidence') for item in embeddings])
 
-    # Print unique detected species with counts, sorted by frequency
-    unique_species, counts = np.unique(predictions, return_counts=True)
-    order = np.argsort(-counts)
-    print(f"\nDetected species (min_confidence={audio.min_confidence}):")
-    for i in order:
-        print(f"{unique_species[i]}: {counts[i]}")
+
+    # confidence = np.array([item.get('confidence') for item in embeddings])
+
+    # # Print unique detected species with counts, sorted by frequency
+    # unique_species, counts = np.unique(predictions, return_counts=True)
+    # order = np.argsort(-counts)
+    # print(f"\nDetected species (min_confidence={audio.min_confidence}):")
+    # for i in order:
+    #     print(f"{unique_species[i]}: {counts[i]}")
+
+
+
+
+
 
     # # Initialize counters
     # total_fmin = 0
@@ -429,12 +436,6 @@ if __name__ == "__main__":
 
 
 
-
-
-
-    # end_time = time.time()
-    # execution_time = end_time - start_time
-    # print(f"Execution time: {execution_time:.2f} seconds")
 
     # ### CLUSTER ROIS AND PREDICT 
     # from clustering import ClusterROI   
@@ -473,10 +474,6 @@ if __name__ == "__main__":
     #     # Select species with highest score
     #     best_species, (best_score, best_conf, best_freq) = max(species_scores.items(), key=lambda x: x[1][0])
     #     print(f"Label {label} ({len(cluster_predictions)} ROIs): Prediction → {best_species}, Confidence → {best_conf:.2f}")
-
-    
-    from display import interactive_display
-    interactive_display(embeddings, predictions, port=5006)
 
 
 
