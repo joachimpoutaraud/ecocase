@@ -364,7 +364,7 @@ if __name__ == "__main__":
 
     # # Set the folder path
     # from pathlib import Path
-    # folder_path = Path("chloris")
+    # folder_path = Path("test")
     # # Iterate over all .wav files in the folder
     # rois = []
     # for audio_file in sorted(folder_path.iterdir()):
@@ -398,7 +398,7 @@ if __name__ == "__main__":
         embeddings.append(audio.emb)
 
     ### DISPLAY ROIS
-    display_rois(embeddings)
+    display_rois(embeddings, noise_reduction='-INF')
 
 
 

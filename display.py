@@ -17,7 +17,7 @@ from bokeh.server.server import Server
 import warnings
 warnings.filterwarnings("ignore")
 
-def display_rois(embeddings, rate=16000, noise_reduction=-60, frame_width=1000, frame_height=600, point_size=5, port=8080):
+def display_rois(embeddings, noise_reduction='-INF', rate=16000, frame_width=1000, frame_height=600, point_size=5, port=8080):
 
     embeddings = [item for sublist in embeddings for item in sublist]  # Flatten the embedding list
 
@@ -215,18 +215,23 @@ def display_rois(embeddings, rate=16000, noise_reduction=-60, frame_width=1000, 
                     fmin = source.data['fmin'][idx]
                     fmax = source.data['fmax'][idx]
 
-                    duration = max(0.001, float(tmax) - float(tmin))
                     base = os.path.splitext(os.path.basename(path))[0]
                     fname = f"{base}_t_{tmin:.3f}_{tmax:.3f}_f_{fmin:.3f}_{fmax:.3f}.wav"
                     outpath = os.path.join("rois", fname)
 
-                    # Example ffmpeg command: trim, convert to mono and 48kHz
+                    audio_filter = ",".join([
+                        # keep sample rate stable and convert to mono
+                        f"aresample=resampler=soxr:out_sample_rate={rate},aformat=channel_layouts=mono",
+                        f"firequalizer=gain='if(between(f,{int(fmin)},{int(fmax)}),0,{noise_reduction})'",
+                        # normalize dynamics so embeddings are consistent across files/ROIs
+                        "dynaudnorm=b=enabled",
+                    ])
+
                     cmd = [
-                    "ffmpeg", "-y", "-hide_banner", "-v", "error",
-                    "-ss", str(tmin), "-t", str(duration),
-                    "-i", path,
-                    "-ac", "1", "-ar", "48000",
-                    outpath
+                        "ffmpeg", "-y", "-hide_banner", "-v", "error",
+                        "-ss", str(tmin), "-t", str(tmax - tmin), "-i", path,
+                        "-filter_complex", audio_filter,
+                        "-f", "wav", outpath
                     ]
 
                     subprocess.run(cmd, check=True)
