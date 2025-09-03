@@ -17,9 +17,9 @@ from bokeh.server.server import Server
 import warnings
 warnings.filterwarnings("ignore")
 
-def display_rois(embeddings, noise_reduction='-INF', rate=16000, frame_width=1000, frame_height=600, point_size=5, port=8080):
-
-    embeddings = [item for sublist in embeddings for item in sublist]  # Flatten the embedding list
+def display_rois(embeddings, noise_reduction=-50, rate=16000, frame_width=1400, frame_height=600, point_size=5, port=8080):
+    # Flatten the embedding list
+    embeddings = [item for sublist in embeddings for item in sublist]  
 
     try:
         labels = np.array([item.get('prediction') for item in embeddings])
@@ -71,7 +71,7 @@ def display_rois(embeddings, noise_reduction='-INF', rate=16000, frame_width=100
             # convert to dB safely (use power)
             Sxx_db = 10 * np.log10(np.abs(Sxx)**2 + 1e-10)
 
-            plt.figure(figsize=(6, 4))
+            plt.figure(figsize=(4, 2))
             plt.pcolormesh(t, f, Sxx_db, shading='auto', cmap='gray')
             plt.ylabel('Frequency [Hz]')
             plt.xlabel('Time [sec]')
@@ -163,7 +163,7 @@ def display_rois(embeddings, noise_reduction='-INF', rate=16000, frame_width=100
             row_open = False
 
             for i, idx in enumerate(selected):
-                if i % 2 == 0:
+                if i % 3 == 0:
                     if row_open:
                         combined_html += '</div>'
                     combined_html += '<div style="display: flex; justify-content: center; margin-bottom: 20px;">'

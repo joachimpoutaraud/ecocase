@@ -3,13 +3,14 @@ import subprocess
 import numpy as np
 
 import cv2
-import librosa
 
 from birdnetlib.main import RecordingBuffer
 from birdnetlib.analyzer import Analyzer
 
+from image import convert_audio_to_image, convert_pixel_to_frequency
 
-# ——— Suppress stdout/stderr ——— #
+
+# Suppress stdout/stderr from birdnetlib
 @contextlib.contextmanager
 def suppress_output():
     with open(os.devnull, "w") as devnull:
@@ -21,123 +22,22 @@ def suppress_output():
             sys.stdout, sys.stderr = old_stdout, old_stderr
 
 class ImageROI():
-    def __init__(self, path, rate=48000, fmin=1, fmax=15000, fps=50, 
-                 fscale="mel", n_fft=512, hop_length=128):
+    def __init__(self, path, rate=48000, fmin=1, fmax=15000):
         
         self.path = path
         self.rate = rate
         self.fmin = fmin
         self.fmax = fmax
-        self.fps = fps
-        self.fscale = fscale
-        self.n_fft = n_fft
-        self.hop_length = hop_length
 
-        self.image = self.convert_audio_to_image()
+    def detect_rois(self, min_duration=0.5, max_duration=10.0, fscale="mel", n_fft=512, hop_length=128, fps=50, noise_profile=[0.0, 0.5], audio_filter_chain=None, image_filter_chain=None, display=True):
 
-    def _get_duration(self):
-        duration = subprocess.run([
-            "ffprobe", "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            self.path
-        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        self.duration = float(duration.stdout.strip())
-        return self.duration
+        # Convert audio to scaleogram image
+        image, height, width = convert_audio_to_image(self.path, self.rate, self.fmin, self.fmax, n_fft, hop_length, fps, noise_profile, audio_filter_chain, image_filter_chain)
+        image, y_to_freq = convert_pixel_to_frequency(image, self.fmin, self.fmax, height, fscale)
 
-    def _convert_px_to_fscale(self, image):
-        # Frequency remapping
-        converted_image = np.zeros_like(image)
-        self._y_to_freq = np.zeros(self.height)
-
-        for y in range(self.height):
-            frac = y / (self.height - 1)
-            if self.fscale == "log":
-                log_f_min, log_f_max = np.log10(self.fmin), np.log10(self.fmax)
-                log_f = log_f_max - frac * (log_f_max - log_f_min)
-                freq = 10 ** log_f
-            elif self.fscale == "mel":
-                mel_f_min = librosa.hz_to_mel(self.fmin)
-                mel_f_max = librosa.hz_to_mel(self.fmax)
-                mel = mel_f_max - frac * (mel_f_max - mel_f_min)
-                freq = librosa.mel_to_hz(mel)
-            else:
-                freq = self.fmax - frac * (self.fmax - self.fmin)
-
-            y_lin = int((self.fmax - freq) / (self.fmax - self.fmin) * (self.height - 1))
-            y_lin = np.clip(y_lin, 0, self.height - 1)
-            converted_image[y, :] = image[y_lin, :]
-            self._y_to_freq[y] = freq
-
-        return converted_image
-
-    def convert_audio_to_image(self, noise_profile=[0.0, 0.5], audio_filter_chain=None, image_filter_chain=None):
-        
-        self.audio_filter_chain = audio_filter_chain or ",".join([
-            f"aresample=resampler=soxr:out_sample_rate={self.rate},aformat=channel_layouts=mono",
-            f"highpass=f={self.fmin}", f"lowpass=f={self.fmax}",
-            f"dynaudnorm=b=enabled"
-        ])
-
-        self.image_filter_chain = image_filter_chain or ",".join([
-            f"showcwt=s=1x{self.n_fft}:slide=scroll:pps={self.hop_length}:"
-            f"rate={self.fps}:deviation=10:min={self.fmin}:max={self.fmax}"
-            # f"showspectrum=s=1x{self.n_fft}:slide=scroll:"
-            # f"start={self.fmin}:stop={self.fmax}"
-        ])
-
-        noise_start, noise_end = noise_profile[0], noise_profile[1]
-        noise_profile_duration = noise_end - noise_start
-        
-        self.duration = self._get_duration()
-
-        filter_complex = (
-            f"[0:a]{self.audio_filter_chain}[af];"
-            
-            # Split audio file in two
-            f"[af]asplit=2[a1][a2];"
-            
-            # Trim noise profile from first audio split
-            f"[a1]atrim=start={noise_start}:end={noise_end},asetpts=PTS-STARTPTS[a_noise];"
-            f"[a_noise]aformat=sample_fmts=s16:channel_layouts=mono[a_formatted];"
-            f"[a2]aformat=sample_fmts=s16:channel_layouts=mono[a_main];"
-
-            # Concatenate noise profile and denoise second audio split
-            f"[a_formatted][a_main]concat=n=2:v=0:a=1[a2_with_noise];"
-            f"[a2_with_noise]asendcmd={noise_start} afftdn sn start,asendcmd={noise_end} afftdn sn end,afftdn=tn=1:tr=1[a2_denoised];"
-
-            # Remove noise profile from second audio split
-            f"[a2_denoised]atrim=start={noise_profile_duration},asetpts=PTS-STARTPTS[a_denoised];"
-            
-            # Convert audio to image
-            f"[a_denoised]{self.image_filter_chain},fps={self.fps},tile={int(self.fps * self.duration)}x1[transform]"
-        )
-
-        # Create FFmpeg command
-        cmd = [
-            "ffmpeg", "-y", "-hide_banner", "-v", "error",
-            "-ss", "0", "-t", str(self.duration), "-i", self.path,
-            "-filter_complex", filter_complex,
-            "-map", "[transform]", "-frames:v", "1", 
-            "-pix_fmt", "gray", "-vcodec", "png",
-            "-f", "image2pipe", "pipe:1"
-        ]
-
-        # Process FFmpeg command
-        with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
-            image_bytes, error = process.communicate()
-            image = cv2.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
-            self.height, self.width = image.shape
-            
-        # Convert pixel to frequency scale
-        self.image = self._convert_px_to_fscale(image)  
-
-        return self.image
-
-    def detect_rois(self, min_duration=0.5, max_duration=None, margin_time=0.1, margin_freq=250, display=True):
         try:      
             # Postprocess gray image for ROI analysis   
-            filtered = cv2.bilateralFilter(self.image, d=9, sigmaColor=75, sigmaSpace=75)
+            filtered = cv2.bilateralFilter(image, d=9, sigmaColor=75, sigmaSpace=75)
             blurred = cv2.GaussianBlur(filtered, (7, 7), 0)
             _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
             
@@ -158,14 +58,14 @@ class ImageROI():
                     continue
 
                 x, y, w, h = cv2.boundingRect(cnt.astype(np.int32))
-                duration_roi = w / self.fps
+                duration_roi = w / fps
                 
                 # Skip ROIs that are shorter than min_duration and, optionally, longer than max_duration
                 if duration_roi < min_duration or (max_duration is not None and duration_roi > max_duration):
                     continue
                   
                 # Skip ROIs that span the entire image (both width and height)
-                if w >= self.width * 0.98 and h >= self.height * 0.98:
+                if w >= width * 0.98 and h >= height * 0.98:
                     continue
                 
                 boxes.append((x, y, x + w, y + h))
@@ -173,10 +73,10 @@ class ImageROI():
             self.rois = []
 
             for x1, y1, x2, y2 in boxes:
-                tmin = x1 / self.fps
-                tmax = x2 / self.fps
-                fmin = self._y_to_freq[min(int(y2), self.height - 1)]
-                fmax = self._y_to_freq[max(int(y1), 0)]
+                tmin = x1 / fps
+                tmax = x2 / fps
+                fmin = y_to_freq[min(int(y2), height - 1)]
+                fmax = y_to_freq[max(int(y1), 0)]
 
                 self.rois.append({
                     "path": self.path,
@@ -194,7 +94,7 @@ class ImageROI():
                 import matplotlib.patches as patches
 
                 fig, ax = plt.subplots()
-                ax.imshow(self.image, cmap="gray")
+                ax.imshow(image, cmap="gray")
                 for roi in self.rois:
                     x1, y1, x2, y2 = roi["bounds"]
                     rect = patches.Rectangle((x1, y1), x2 - x1, y2 - y1,
@@ -206,7 +106,7 @@ class ImageROI():
             return self.rois
 
         except Exception as e:
-            print(f"❌ Failed to extract ROIs: {e}")
+            print(f"Failed to extract ROIs: {e}")
             return []
         
         
@@ -310,6 +210,7 @@ class AudioROI(RecordingBuffer):
 
             # Extract embeddings with birdnetlib function
             e = self.analyzer._return_embeddings(np.array([c], dtype="float32"))[0].tolist()
+            e = []
 
             if predict:
                 import operator
@@ -327,8 +228,8 @@ class AudioROI(RecordingBuffer):
                         "path": self.path,
                         "tmin": tmin_chunk,
                         "tmax": tmax_chunk,
-                        "fmin": round(self.fmin, 2),
-                        "fmax": round(self.fmax, 2),
+                        "fmin": self.fmin,
+                        "fmax": self.fmax,
                         "embeddings": e,
                         "prediction": "Unknown",
                         "confidence": 0.0
@@ -338,8 +239,8 @@ class AudioROI(RecordingBuffer):
                         "path": self.path,
                         "tmin": tmin_chunk,
                         "tmax": tmax_chunk,
-                        "fmin": round(self.fmin, 2),
-                        "fmax": round(self.fmax, 2),
+                        "fmin": self.fmin,
+                        "fmax": self.fmax,
                         "embeddings": e,
                         "prediction": p_sorted[0][0],
                         "confidence": p_sorted[0][1]
@@ -349,15 +250,14 @@ class AudioROI(RecordingBuffer):
                     "path": self.path,
                     "tmin": tmin_chunk,
                     "tmax": tmax_chunk,
-                    "fmin": round(self.fmin, 2),
-                    "fmax": round(self.fmax, 2),
+                    "fmin": self.fmin,
+                    "fmax": self.fmax,
                     "embeddings": e
                 })
 
 
 if __name__ == "__main__":
     # TODO For repertoire analysis noise profile need to be computed on the whole audio file not 3s segments, to be continued
-    # TODO Create predict_cluster function to predict the clusters
 
     from tqdm import tqdm
     from display import display_rois
@@ -376,7 +276,7 @@ if __name__ == "__main__":
     #     rois.extend(image.rois)
         
     ### DETECT ROIS ON SPECTROGRAM IMAGE
-    image = ImageROI(path="out.wav", fscale="mel", fmin=1, fmax=15000)
+    image = ImageROI(path="out.wav", rate=48000, fmin=150, fmax=15000)
     image.detect_rois(min_duration=0.5, max_duration=10.0, display=False)
     # Get the region of interests
     rois = image.rois
@@ -398,42 +298,41 @@ if __name__ == "__main__":
         embeddings.append(audio.emb)
 
     ### DISPLAY ROIS
-    display_rois(embeddings, noise_reduction='-INF')
-
-
-
-    # confidence = np.array([item.get('confidence') for item in embeddings])
-
-    # # Print unique detected species with counts, sorted by frequency
-    # unique_species, counts = np.unique(predictions, return_counts=True)
-    # order = np.argsort(-counts)
-    # print(f"\nDetected species (min_confidence={audio.min_confidence}):")
-    # for i in order:
-    #     print(f"{unique_species[i]}: {counts[i]}")
+    # display_rois(embeddings, noise_reduction=-50)
 
 
 
 
 
+    ### FREQUENCY ANALYSIS
+    embeddings = [item for sublist in embeddings for item in sublist] # flatten list of lists
 
-    # # Initialize counters
-    # total_fmin = 0
-    # total_fmax = 0
-    # count = 0
-    # # Iterate through the nested list
-    # for sublist in embeddings:
-    #     for entry in sublist:
-    #         if entry['prediction'] == 'Turdus iliacus_Redwing': # Chloris chloris_European Greenfinch
-    #             total_fmin += entry['fmin']
-    #             total_fmax += entry['fmax']
-    #             count += 1
-    # # Calculate averages
-    # average_fmin = total_fmin / count if count > 0 else 0
-    # average_fmax = total_fmax / count if count > 0 else 0
-    # # Print the results
-    # print(f"Average fmin: {average_fmin}")
-    # print(f"Average fmax: {average_fmax}")
+    # Get unique detected species with counts
+    predictions = np.array([item.get('prediction') for item in embeddings])
+    unique_species, counts = np.unique(predictions, return_counts=True)
+    print(f"\n*** Species detections with frequency range ***")
+    print("-----------------------------------------------")
 
+    for i in np.argsort(-counts):
+        # Filter embeddings for a specific species
+        filtered = [d for d in embeddings if d['prediction'] == unique_species[i]]
+        confidence = np.array([item.get('confidence') for item in filtered])
+        # Collect fmin and fmax values
+        fmin_values = []
+        fmax_values = []
+
+        for entry in filtered:
+            fmin_values.append(entry['fmin'])
+            fmax_values.append(entry['fmax'])
+
+        # Calculate frequency range
+        fmin_median = np.median(fmin_values) if fmin_values else 0
+        fmax_median = np.median(fmax_values) if fmin_values else 0
+        avg_confidence = np.nanmean(confidence)
+        print(f"{unique_species[i]} ({np.round(fmin_median,2)} - {np.round(fmax_median,2)} Hz): {counts[i]} detections (avg_confidence={np.round(float(avg_confidence),2)})")
+
+
+    ### REPERTOIRE ANALYSIS
 
 
 
