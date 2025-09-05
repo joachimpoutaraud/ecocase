@@ -18,9 +18,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 def display_rois(embeddings, noise_reduction=-50, rate=16000, frame_width=1400, frame_height=600, point_size=5, port=8080):
-    # Flatten the embedding list
-    embeddings = [item for sublist in embeddings for item in sublist]  
-
+ 
     try:
         labels = np.array([item.get('prediction') for item in embeddings])
     except Exception:
@@ -37,9 +35,9 @@ def display_rois(embeddings, noise_reduction=-50, rate=16000, frame_width=1400, 
         audio_filter = ",".join([
             # keep sample rate stable and convert to mono
             f"aresample=resampler=soxr:out_sample_rate={rate},aformat=channel_layouts=mono",
-            f"firequalizer=gain='if(between(f,{int(fmin)},{int(fmax)}),0,{noise_reduction})'",
             # normalize dynamics so embeddings are consistent across files/ROIs
             "dynaudnorm=b=enabled",
+            f"firequalizer=gain='if(between(f,{int(fmin)},{int(fmax)}),0,{noise_reduction})'",
         ])
 
         cmd = [
@@ -106,6 +104,7 @@ def display_rois(embeddings, noise_reduction=-50, rate=16000, frame_width=1400, 
 
         labels_arr = np.array(labels).astype(str)
         unique_labels = np.unique(labels_arr).astype(str).tolist()
+
         x, y = X[:, 0], X[:, 1]
 
         label_to_idx = {lbl: i for i, lbl in enumerate(unique_labels)}
@@ -222,9 +221,9 @@ def display_rois(embeddings, noise_reduction=-50, rate=16000, frame_width=1400, 
                     audio_filter = ",".join([
                         # keep sample rate stable and convert to mono
                         f"aresample=resampler=soxr:out_sample_rate={rate},aformat=channel_layouts=mono",
-                        f"firequalizer=gain='if(between(f,{int(fmin)},{int(fmax)}),0,{noise_reduction})'",
                         # normalize dynamics so embeddings are consistent across files/ROIs
                         "dynaudnorm=b=enabled",
+                        f"firequalizer=gain='if(between(f,{int(fmin)},{int(fmax)}),0,{noise_reduction})'",
                     ])
 
                     cmd = [

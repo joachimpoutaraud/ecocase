@@ -39,19 +39,11 @@ def convert_pixel_to_frequency(image, fmin, fmax, height, fscale="mel"):
 
     return converted_image, y_to_freq
 
-def convert_audio_to_image(path, rate=48000, fmin=1, fmax=15000, n_fft=512, hop_length=128, fps=50, noise_profile=[0.0, 0.5], audio_filter_chain=None, image_filter_chain=None):
+def convert_audio_to_image(path, rate=48000, fmin=1, fmax=15000, audio_filter_chain=None, noise_profile=[0.0, 0.5], n_fft=512, hop_length=128, fps=50):
     
     audio_filter_chain = audio_filter_chain or ",".join([
         f"aresample=resampler=soxr:out_sample_rate={rate},aformat=channel_layouts=mono",
-        # f"highpass=f={self.fmin}", f"lowpass=f={self.fmax}",
         f"dynaudnorm=b=enabled"
-    ])
-
-    image_filter_chain = image_filter_chain or ",".join([
-        f"showcwt=s=1x{n_fft}:slide=scroll:pps={hop_length}:"
-        f"rate={fps}:deviation=10:min={fmin}:max={fmax}"
-        # f"showspectrum=s=1x{self.n_fft}:slide=scroll:"
-        # f"start={self.fmin}:stop={self.fmax}"
     ])
 
     duration = get_duration(path)
@@ -76,8 +68,8 @@ def convert_audio_to_image(path, rate=48000, fmin=1, fmax=15000, n_fft=512, hop_
         # Remove noise profile from second audio split
         f"[a2_denoised]atrim=start={noise_profile_duration},asetpts=PTS-STARTPTS[a_denoised];"
         
-        # Convert audio to image
-        f"[a_denoised]{image_filter_chain},fps={fps},tile={int(fps * duration)}x1[transform]"
+        # Convert audio to scaleogram image
+        f"[a_denoised]showcwt=s=1x{n_fft}:slide=scroll:pps={hop_length}:rate={fps}:deviation=10:min={fmin}:max={fmax},fps={fps},tile={int(fps * duration)}x1[transform]"
     )
 
     # Create FFmpeg command
