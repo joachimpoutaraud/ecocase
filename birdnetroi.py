@@ -214,7 +214,7 @@ class BirdNETROI(RecordingBuffer):
                         "tmin": tmin_seg,
                         "tmax": tmax_seg,
                         "fmin": seg["fmin"],
-                        "fmax": seg["fmin"],
+                        "fmax": seg["fmax"],
                         "embeddings": e,
                         "prediction": "Unknown",
                         "confidence": 0.0
@@ -225,7 +225,7 @@ class BirdNETROI(RecordingBuffer):
                         "tmin": tmin_seg,
                         "tmax": tmax_seg,
                         "fmin": seg["fmin"],
-                        "fmax": seg["fmin"],
+                        "fmax": seg["fmax"],
                         "embeddings": e,
                         "prediction": p_sorted[0][0],
                         "confidence": p_sorted[0][1]
@@ -236,7 +236,7 @@ class BirdNETROI(RecordingBuffer):
                     "tmin": tmin_seg,
                     "tmax": tmax_seg,
                     "fmin": seg["fmin"],
-                    "fmax": seg["fmin"],
+                    "fmax": seg["fmax"],
                     "embeddings": e
                 })
         
