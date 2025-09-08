@@ -22,12 +22,13 @@ def suppress_output():
             sys.stdout, sys.stderr = old_stdout, old_stderr
 
 class RecordingROI(RecordingBuffer):
-    def __init__(self, path, rate=48000, fmin=1, fmax=15000, audio_filter_chain=None):
+    def __init__(self, path, rate=48000, fmin=1, fmax=15000, verbose=False, audio_filter_chain=None):
         
         self.path = path
         self.rate = rate
         self.fmin = fmin
         self.fmax = fmax
+        self.verbose = verbose
 
         self.audio_filter_chain = audio_filter_chain or ",".join([
             # Resample audio file
@@ -43,26 +44,35 @@ class RecordingROI(RecordingBuffer):
             self.analyzer = Analyzer()
 
 
-    def detect_rois(self, min_duration=0.5, max_duration=10.0, fscale="mel", noise_profile=[0.0, 0.5], n_fft=512, hop_length=128, fps=50, display=True):
-        # Convert audio to image
-        image, height, width = convert_audio_to_image(self.path, self.fmin, self.fmax, self.audio_filter_chain, noise_profile, n_fft, hop_length, fps)
-        converted_image, px_to_freq = convert_pixel_to_frequency(image, self.fmin, self.fmax, height, fscale)
+    def detect_rois(self, min_duration=0.5, max_duration=10.0, fscale="mel", noise_profile=[0.0, 0.5],
+                    n_fft=512, hop_length=128, fps=50, display=True):
+        
+        paths = []
+        if os.path.isdir(self.path):
+            # Collect all audio files in the folder
+            for file in os.listdir(self.path):
+                if file.lower().endswith((".wav", ".mp3", ".flac", ".aiff", ".ogg")):
+                    paths.append(os.path.join(self.path, file))
+        else:
+            paths.append(self.path)
 
-        try:      
-            # Postprocess gray image for ROI analysis   
+        all_rois = []
+
+        for audio_path in tqdm(paths, desc="Detecting region of interests (ROIs)", disable=not self.verbose):
+            image, height, width = convert_audio_to_image(audio_path, self.fmin, self.fmax,
+                                                        self.audio_filter_chain, noise_profile,
+                                                        n_fft, hop_length, fps)
+            converted_image, px_to_freq = convert_pixel_to_frequency(image, self.fmin, self.fmax, height, fscale)
+
             filtered = cv2.bilateralFilter(converted_image, d=9, sigmaColor=75, sigmaSpace=75)
             blurred = cv2.GaussianBlur(filtered, (7, 7), 0)
             _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            
-            # Create a mask to remove border artifacts
+
             border_thickness = 5
             border_mask = np.ones_like(thresh, dtype=np.uint8) * 255
             border_mask[border_thickness:-border_thickness, border_thickness:-border_thickness] = 0
-            
-            # Remove foreground pixels near the edges
-            processed_image = cv2.bitwise_and(thresh, cv2.bitwise_not(border_mask)) 
-                  
-            # Find contours on the processed image
+            processed_image = cv2.bitwise_and(thresh, cv2.bitwise_not(border_mask))
+
             contours, _ = cv2.findContours(processed_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
             boxes = []
@@ -72,18 +82,13 @@ class RecordingROI(RecordingBuffer):
 
                 x, y, w, h = cv2.boundingRect(cnt.astype(np.int32))
                 duration_roi = w / fps
-                
-                # Skip ROIs that are shorter than min_duration and, optionally, longer than max_duration
+
                 if duration_roi < min_duration or (max_duration is not None and duration_roi > max_duration):
                     continue
-                  
-                # Skip ROIs that span the entire image (both width and height)
                 if w >= width * 0.98 and h >= height * 0.98:
                     continue
-                
-                boxes.append((x, y, x + w, y + h))
 
-            self.rois = []
+                boxes.append((x, y, x + w, y + h))
 
             for x1, y1, x2, y2 in boxes:
                 tmin = x1 / fps
@@ -91,14 +96,14 @@ class RecordingROI(RecordingBuffer):
                 fmin = px_to_freq[min(int(y2), height - 1)]
                 fmax = px_to_freq[max(int(y1), 0)]
 
-                self.rois.append({
-                    "path": self.path,
+                all_rois.append({
+                    "path": audio_path,
                     "tmin": tmin,
                     "tmax": tmax,
                     "fmin": fmin,
                     "fmax": fmax,
                     "min_duration": min_duration,
-                    "bounds": (x1, y1, x2, y2)  # Store raw box coordinates for display
+                    "bounds": (x1, y1, x2, y2)
                 })
 
             if display:
@@ -107,19 +112,15 @@ class RecordingROI(RecordingBuffer):
 
                 fig, ax = plt.subplots()
                 ax.imshow(converted_image, cmap="gray")
-                for roi in self.rois:
-                    x1, y1, x2, y2 = roi["bounds"]
+                for x1, y1, x2, y2 in boxes:
                     rect = patches.Rectangle((x1, y1), x2 - x1, y2 - y1,
                                             linewidth=2, edgecolor='lime', facecolor='none')
                     ax.add_patch(rect)
-                ax.set_title("Detected ROIs with Bounding Boxes")
+                ax.set_title(f"Detected ROIs in {os.path.basename(audio_path)}")
                 plt.show()
 
-            return self.rois
-
-        except Exception as e:
-            print(f"Failed to extract ROIs: {e}")
-            return []
+        self.rois = all_rois
+        return self.rois
         
         
     def segment_rois(self, rois, noise_reduction=-20, download=False):
@@ -128,7 +129,7 @@ class RecordingROI(RecordingBuffer):
         total_samples = int(3.0 * self.rate)
 
         # Iterate over each ROI and segment audio
-        for roi in tqdm(rois, desc="Segmenting rois"):
+        for roi in tqdm(rois, desc="Segmenting ROIs", disable=not self.verbose):
             # Extract ROI audio using utils function
             self.ndarray = extract_roi(roi['path'], roi['tmin'], roi['tmax'], roi['fmin'], roi['fmax'], self.audio_filter_chain, noise_reduction, download, rate=self.rate)[0]
 
@@ -183,7 +184,7 @@ class RecordingROI(RecordingBuffer):
             result["confidence"] = confidence
             return result
 
-        for seg in tqdm(segments, desc="Processing segments with BirdNET"):
+        for seg in tqdm(segments, desc="Processing segments with BirdNET", disable=not self.verbose):
             samples = seg["samples"]
             if self.rate != birdnet_sr:
                 samples = librosa.resample(samples, orig_sr=self.rate, target_sr=birdnet_sr)
@@ -217,9 +218,11 @@ class RecordingROI(RecordingBuffer):
         # Get unique detected species with counts
         preds = np.array([item.get('prediction') for item in predictions])
         unique_species, counts = np.unique(preds, return_counts=True)
-        print("--------------------------------------------------")
-        print(f"*** Species detections with frequency analysis ***")
-        print("--------------------------------------------------")
+
+        if self.verbose:
+            print("--------------------------------------------------")
+            print(f"*** Species detections with frequency analysis ***")
+            print("--------------------------------------------------")
 
         for i in np.argsort(-counts):
             # Filter embeddings for a specific species
@@ -247,19 +250,6 @@ class RecordingROI(RecordingBuffer):
 
 if __name__ == "__main__":
     # TODO For repertoire analysis noise profile need to be computed on the whole audio file not 3s segments, to be continued
-
-    # # Set the folder path
-    # from pathlib import Path
-    # folder_path = Path("test")
-    # # Iterate over all .wav files in the folder
-    # rois = []
-    # for audio_file in sorted(folder_path.iterdir()):
-    #     if audio_file.suffix.lower() not in {'.wav', '.mp3', '.flac'}:
-    #         continue
-    #     print(audio_file)
-    #     rec = RecordingROI(path=str(audio_file), rate=48000, fmin=1, fmax=15000)
-    #     rec.detect_rois(min_duration=0.5, max_duration=10.0, display=False)
-    #     rois.extend(rec.rois)
 
     ### Create RecordingROI instance
     rec = RecordingROI(path="out.wav", rate=48000, fmin=150, fmax=15000)
