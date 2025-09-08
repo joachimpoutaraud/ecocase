@@ -1,11 +1,5 @@
-import os, subprocess
-import io, base64
 import numpy as np
-import matplotlib.pyplot as plt
-from scipy.io import wavfile
-from scipy.signal import spectrogram
 import webbrowser
-
 import umap
 
 from bokeh.plotting import figure
@@ -14,77 +8,15 @@ from bokeh.layouts import column, row
 from bokeh.palettes import Category20
 from bokeh.server.server import Server
 
+from utils import extract_roi
+
 import warnings
 warnings.filterwarnings("ignore")
 
-def display_rois(embeddings, noise_reduction=-50, rate=16000, frame_width=1400, frame_height=600, point_size=5, port=8080):
- 
-    try:
-        labels = np.array([item.get('prediction') for item in embeddings])
-    except Exception:
-        pass
 
-    def render_roi_base64(path, tmin, tmax, fmin, fmax, rate, noise_reduction, mode='audio'):
-        """
-        Read a region-of-interest (ROI) from `path` (wav file) between tmin and tmax (seconds)
-        and return either an audio data URI or a spectrogram <img/> HTML string.
-
-        mode: 'audio' or 'spectrogram'
-        """
-        # Read file
-        audio_filter = ",".join([
-            # keep sample rate stable and convert to mono
-            f"aresample=resampler=soxr:out_sample_rate={rate},aformat=channel_layouts=mono",
-            # normalize dynamics so embeddings are consistent across files/ROIs
-            "dynaudnorm=b=enabled",
-            f"firequalizer=gain='if(between(f,{int(fmin)},{int(fmax)}),0,{noise_reduction})'",
-        ])
-
-        cmd = [
-            "ffmpeg", "-y", "-hide_banner", "-v", "error",
-            "-ss", str(tmin), "-t", str(tmax - tmin), "-i", path,
-            "-filter_complex", audio_filter,
-            "-f", "s16le", "pipe:1"
-        ]
-        # Run FFmpeg and read audio data
-        with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
-            audio_bytes, error = process.communicate()
-            roi_audio = np.frombuffer(audio_bytes, dtype=np.int16)
-
-        result_audio = None
-        result_img = None
-
-        if mode == 'audio':
-            buf = io.BytesIO()
-            wavfile.write(buf, rate, roi_audio)
-            buf.seek(0)
-            b64 = base64.b64encode(buf.read()).decode('ascii')
-            result_audio = f"data:audio/wav;base64,{b64}"
-
-            return result_audio
-
-        if mode == 'spectrogram':
-            # compute spectrogram and render to PNG (grayscale)
-            f, t, Sxx = spectrogram(roi_audio, fs=rate)
-            # convert to dB safely (use power)
-            Sxx_db = 10 * np.log10(np.abs(Sxx)**2 + 1e-10)
-
-            plt.figure(figsize=(4, 2))
-            plt.pcolormesh(t, f, Sxx_db, shading='auto', cmap='gray')
-            plt.ylabel('Frequency [Hz]')
-            plt.xlabel('Time [sec]')
-            plt.title('Spectrogram')
-            buf_img = io.BytesIO()
-            plt.savefig(buf_img, format='png', bbox_inches='tight', pad_inches=0)
-            plt.close()
-            buf_img.seek(0)
-            img_b64 = base64.b64encode(buf_img.read()).decode('ascii')
-            result_img = f'<img src="data:image/png;base64,{img_b64}" />'
-
-            return result_img
-        
-        else:
-            raise ValueError("mode must be either 'audio' or 'spectrogram'")
+def run_bokeh_server(embeddings, rate, audio_filter_chain=None, noise_reduction=-50, frame_width=1400, frame_height=600, point_size=5, port=8080):
+    # Prepare data
+    labels = np.array([item.get('prediction') for item in embeddings])
 
     def modify_doc(doc):
         # Prepare embeddings
@@ -92,7 +24,7 @@ def display_rois(embeddings, noise_reduction=-50, rate=16000, frame_width=1400, 
         X = np.nan_to_num(X)
 
         if X.shape[1] > 2:
-            reducer = umap.UMAP(n_components=2, metric='cosine', random_state=2025, transform_seed=2025)
+            reducer = umap.UMAP(n_components=2, random_state=2025)
             labels_arr = np.asarray(labels).astype(str)
             mask = labels_arr != 'Unknown'
             y = np.full(labels_arr.shape, -1, dtype=int)
@@ -108,6 +40,7 @@ def display_rois(embeddings, noise_reduction=-50, rate=16000, frame_width=1400, 
         x, y = X[:, 0], X[:, 1]
 
         label_to_idx = {lbl: i for i, lbl in enumerate(unique_labels)}
+
         try:
             colors = Category20[len(unique_labels)]
         except:
@@ -174,8 +107,8 @@ def display_rois(embeddings, noise_reduction=-50, rate=16000, frame_width=1400, 
                 fmin = source.data['fmin'][idx]
                 fmax = source.data['fmax'][idx]
 
-                spectrogram_result = render_roi_base64(path, tmin, tmax, fmin, fmax, rate, noise_reduction, mode='spectrogram')
-                audio_result = render_roi_base64(path, tmin, tmax, fmin, fmax, rate, noise_reduction, mode='audio')
+                spectrogram_result = extract_roi(path, tmin, tmax, fmin, fmax, audio_filter_chain, noise_reduction, encode='spectrogram', rate=rate)
+                audio_result = extract_roi(path, tmin, tmax, fmin, fmax, audio_filter_chain, noise_reduction, encode='audio', rate=rate)
 
                 combined_html += f'''
                     <div style="display: flex; flex-direction: column; align-items: center; margin: 10px;">
@@ -190,10 +123,6 @@ def display_rois(embeddings, noise_reduction=-50, rate=16000, frame_width=1400, 
             spectrogram_div.text = combined_html
             audio_div.text = ""  # Clear audio_div since it's merged
 
-        # Single button
-        roi_button = Button(label="Show selected ROIs", button_type="primary")
-        roi_button.on_click(show_rois)
-
         def download_rois():
             inds = list(source.selected.indices)
             if not inds:
@@ -202,7 +131,6 @@ def display_rois(embeddings, noise_reduction=-50, rate=16000, frame_width=1400, 
                 doc.add_next_tick_callback(upd_empty)
                 return
 
-            os.makedirs("rois", exist_ok=True)
             status_div.text = f"Starting download of {len(inds)} ROI(s)..."
 
             saved = []
@@ -214,27 +142,9 @@ def display_rois(embeddings, noise_reduction=-50, rate=16000, frame_width=1400, 
                     fmin = source.data['fmin'][idx]
                     fmax = source.data['fmax'][idx]
 
-                    base = os.path.splitext(os.path.basename(path))[0]
-                    fname = f"{base}_t_{tmin:.3f}_{tmax:.3f}_f_{fmin:.3f}_{fmax:.3f}.wav"
-                    outpath = os.path.join("rois", fname)
-
-                    audio_filter = ",".join([
-                        # keep sample rate stable and convert to mono
-                        f"aresample=resampler=soxr:out_sample_rate={rate},aformat=channel_layouts=mono",
-                        # normalize dynamics so embeddings are consistent across files/ROIs
-                        "dynaudnorm=b=enabled",
-                        f"firequalizer=gain='if(between(f,{int(fmin)},{int(fmax)}),0,{noise_reduction})'",
-                    ])
-
-                    cmd = [
-                        "ffmpeg", "-y", "-hide_banner", "-v", "error",
-                        "-ss", str(tmin), "-t", str(tmax - tmin), "-i", path,
-                        "-filter_complex", audio_filter,
-                        "-f", "wav", outpath
-                    ]
-
-                    subprocess.run(cmd, check=True)
+                    _, outpath = extract_roi(path, tmin, tmax, fmin, fmax, audio_filter_chain, noise_reduction, download=True, rate=rate)
                     saved.append(outpath)
+
                 except Exception as e:
                     print(f"Error running ffmpeg for idx {idx}: {e}")
                     saved.append(f"ERROR_saving_idx_{idx}: {e}")
@@ -244,10 +154,6 @@ def display_rois(embeddings, noise_reduction=-50, rate=16000, frame_width=1400, 
 
             # update status on the document's next tick
             doc.add_next_tick_callback(update_status)
-
-        # Download button using ffmpeg to save selected ROIs to "rois" folder.
-        download_button = Button(label="Download selected ROIs", button_type="success")
-        download_button.on_click(download_rois)
 
         # Reset button: clears selection, spectrograms, audio players and status text.
         def reset_all():
@@ -266,8 +172,18 @@ def display_rois(embeddings, noise_reduction=-50, rate=16000, frame_width=1400, 
                     pass
             doc.add_next_tick_callback(do_reset)
 
+
+        # Single button
+        roi_button = Button(label="Show selected ROIs", button_type="primary")
+        roi_button.on_click(show_rois)
+
+        # Download button using ffmpeg to save selected ROIs to "rois" folder.
+        download_button = Button(label="Download selected ROIs", button_type="success")
+        download_button.on_click(download_rois)
+
         reset_button = Button(label="Reset", button_type="warning")
         reset_button.on_click(reset_all)
+    
 
         # Attach the reset button to the buttons row.
         # This callback will run on the next tick when centered_buttons exists.
@@ -312,13 +228,6 @@ def display_rois(embeddings, noise_reduction=-50, rate=16000, frame_width=1400, 
     try:
         webbrowser.open_new_tab(url)
     except Exception:
-        # best-effort to open browser; ignore failures and continue to start server loop
         pass
 
     server.io_loop.start()
-
-
-
-
-
-
