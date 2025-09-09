@@ -1,4 +1,6 @@
 import os
+import subprocess
+import numpy as np
 import pandas as pd
 
 import json
@@ -7,14 +9,64 @@ import time, datetime
 import urllib.request
 from pathlib import Path
 from functools import partial
-from multiprocessing.pool import Pool
-
-from audio import load_audio
-
-from birdnet_analyzer import config as cfg
+from multiprocessing import Pool, cpu_count
 
 import warnings
 warnings.filterwarnings(action="ignore")
+
+def load_audio(path, output_path=None, audio_filter_chain=None, download=False, rate=48000):
+    """
+    Extracts and filters region of interests (ROIs) from a recording using FFmpeg.
+
+    Parameters:
+        path (str): Path to the input audio file.
+        audio_filter_chain (str): FFmpeg-compatible audio filter chain string.
+        noise_reduction (int): Gain reduction outside the frequency band.
+        download (bool): If True, saves filtered audio to disk and returns output path.
+        output_folder (str): Folder to save the output audio file.
+        encode (str): If 'audio', returns base64-encoded audio. If 'spectrogram', returns base64 image.
+        rate (int): Sample rate for encoding and spectrogram.
+
+    Returns:
+        np.ndarray or str: Filtered audio data, base64 string, or output path.
+    """
+
+    # Get the audio filter chain
+    full_filter_chain = ",".join([
+        # Resample audio file
+        f"aresample=resampler=soxr:out_sample_rate={rate}",
+        # Convert to mono
+        f"aformat=channel_layouts=mono"
+    ])
+
+    if audio_filter_chain is not None:
+        full_filter_chain = audio_filter_chain
+
+    if download:
+        full_filter_chain += ",asplit=2[a1][a2]"
+
+    cmd = [
+        "ffmpeg", "-y", "-hide_banner", "-v", "error",
+        "-i", path,
+        "-filter_complex", full_filter_chain
+    ]
+
+    if download:
+        cmd += ["-map", "[a1]", "-f", "f32le", "pipe:1", "-map", "[a2]", "-f", "wav", output_path]
+    else:
+        cmd += ["-f", "f32le", "pipe:1"]
+
+    with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
+        audio_bytes, error = process.communicate()
+        if error:
+            print("FFmpeg error:", error.decode())
+
+    roi_audio = np.frombuffer(audio_bytes, dtype=np.float32)
+
+    if download:
+        return roi_audio, output_path
+
+    return [roi_audio]
 
 
 class XenoCanto():
@@ -50,13 +102,21 @@ class XenoCanto():
 
     def __init__(
                 self,
-                params_xc = cfg.PARAMS_XC,
-                species_xc = cfg.SPECIES_XC,
-                num_files = cfg.NUM_FILES,
+                params_xc = [                 
+                    'grp:birds',                      # Group to which the species belongs (birds, bats, frogs, grasshoppers) 
+                    'type:song',                      # Type of the bird sound
+                    'len:"3-100"',                    # Length of the recording (seconds)
+                    'q:">C"',                         # Quality rating of the recording
+                    # 'area:america',                   # Continental area: africa, america, asia, australia, europe
+                    # 'box:-5.681584,-71.740723,9.535749,-38.364258', # Geographical bounding box (min_lat, min_lon, max_lat, max_lon)
+                    # Radius search easily made using bboxfinder.com (coordinate format:"Lat / Lng" + draw a circle with radius ~ 500km, and copy map)
+                ],
+                species_xc = ['Chloris chloris'],
+                num_files = 50,
                 format_time = False,
                 format_date = False,
                 verbose = True,
-                save_path = 'train_data',
+                save_path = 'xc_dataset',
                 overwrite = True,
                 ):
 
@@ -193,7 +253,7 @@ class XenoCanto():
             try:
                 df['lat'] = df['lat'].astype(float)
                 df['lng'] = df['lng'].astype(float)
-            except ValueError:
+            except:
                 pass
             
             # rearrange index to be sure to have unique and increasing index
@@ -248,7 +308,7 @@ class XenoCanto():
                     # Test if the number of files is greater than the maximum number of resquested files for each species 
                     for i in df.en.value_counts()[df.en.value_counts() > self.num_files].index.to_list():
                         rows = df[df.en == i]
-                        to_drop = rows.sample(n=len(rows) - self.num_files, random_state=cfg.RANDOM_SEED).index.to_list()
+                        to_drop = rows.sample(n=len(rows) - self.num_files, random_state=2025).index.to_list()
                         df = df.drop(to_drop)
                     # Test if the number of files is smaller than the minimum number of resquested files for each species 
                     for i in df.en.value_counts()[df.en.value_counts() < self.num_files].index.to_list():
@@ -306,7 +366,7 @@ class XenoCanto():
 
         local_file_paths, tasks = [], []
         
-        with Pool(processes=max(1, cfg.CPU_THREADS)) as pool:
+        with Pool(processes=max(1, cpu_count()-1)) as pool:
             # Prepare arguments for parallel processing
             for _, row in self.df.iterrows():
                 path = row['file']
@@ -326,7 +386,7 @@ class XenoCanto():
 
                 try:
                     # Append parallel processing tasks for downloading audio with local file paths
-                    tasks.append(pool.apply_async(partial(load_audio, path=path, dynaudnorm=False, denoise=False, output_filename=file_path)))
+                    tasks.append(pool.apply_async(partial(load_audio, path, output_path=file_path, download=True)))
                     local_file_paths.append(file_path)
                 except:
                     pass
@@ -346,3 +406,9 @@ class XenoCanto():
             self.df.to_csv(csv_filename, index=False, sep=";")
 
         return self.df
+    
+
+if __name__ == "__main__":
+
+    xc = XenoCanto()
+    xc.dataset(download=True)
