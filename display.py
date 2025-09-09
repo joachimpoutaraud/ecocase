@@ -1,5 +1,6 @@
 import numpy as np
 import webbrowser
+
 import umap
 
 from bokeh.plotting import figure
@@ -8,7 +9,7 @@ from bokeh.layouts import column, row
 from bokeh.palettes import Category20
 from bokeh.server.server import Server
 
-from utils import extract_roi
+from rois import extract_roi_audio
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -107,8 +108,8 @@ def run_bokeh_server(embeddings, rate, audio_filter_chain=None, noise_reduction=
                 fmin = source.data['fmin'][idx]
                 fmax = source.data['fmax'][idx]
 
-                spectrogram_result = extract_roi(path, tmin, tmax, fmin, fmax, audio_filter_chain, noise_reduction, encode='spectrogram', rate=rate)
-                audio_result = extract_roi(path, tmin, tmax, fmin, fmax, audio_filter_chain, noise_reduction, encode='audio', rate=rate)
+                spectrogram_result = extract_roi_audio(path, tmin, tmax, fmin, fmax, audio_filter_chain, noise_reduction, encode='spectrogram', rate=rate)
+                audio_result = extract_roi_audio(path, tmin, tmax, fmin, fmax, audio_filter_chain, noise_reduction, encode='audio', rate=rate)
 
                 combined_html += f'''
                     <div style="display: flex; flex-direction: column; align-items: center; margin: 10px;">
@@ -142,7 +143,7 @@ def run_bokeh_server(embeddings, rate, audio_filter_chain=None, noise_reduction=
                     fmin = source.data['fmin'][idx]
                     fmax = source.data['fmax'][idx]
 
-                    _, outpath = extract_roi(path, tmin, tmax, fmin, fmax, audio_filter_chain, noise_reduction, download=True, rate=rate)
+                    _, outpath = extract_roi_audio(path, tmin, tmax, fmin, fmax, audio_filter_chain, noise_reduction, download=True, rate=rate)
                     saved.append(outpath)
 
                 except Exception as e:

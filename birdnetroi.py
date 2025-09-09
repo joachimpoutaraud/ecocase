@@ -1,35 +1,39 @@
-import os, sys, contextlib
-import numpy as np
-
-import cv2
+import os
 from tqdm import tqdm
+from multiprocessing import Pool, cpu_count
 
 from birdnetlib.main import RecordingBuffer
-from birdnetlib.analyzer import Analyzer
 
-from utils import convert_audio_to_image, convert_pixel_to_frequency, extract_roi
+from rois import extract_roi_contours, extract_roi_chunks
+from analysis import analyze_segment
 
-
-# Suppress stdout/stderr from birdnetlib
-@contextlib.contextmanager
-def suppress_output():
-    with open(os.devnull, "w") as devnull:
-        old_stdout, old_stderr = sys.stdout, sys.stderr
-        sys.stdout, sys.stderr = devnull, devnull
-        try:
-            yield
-        finally:
-            sys.stdout, sys.stderr = old_stdout, old_stderr
 
 class RecordingROI(RecordingBuffer):
-    def __init__(self, path, rate=48000, fmin=1, fmax=15000, verbose=False, audio_filter_chain=None):
+    def __init__(self, path, rate=48000, fmin=1, fmax=15000, audio_filter_chain=None, multiprocessing=True, verbose=True):
         
-        self.path = path
         self.rate = rate
         self.fmin = fmin
         self.fmax = fmax
+        self.multiprocessing = multiprocessing
         self.verbose = verbose
 
+        # Get the file or folder paths
+        self.path = []
+        if os.path.isdir(path):
+            for file in os.listdir(path):
+                full_path = os.path.join(path, file)
+                if file.lower().endswith((".wav", ".mp3", ".flac", ".aiff", ".ogg")):
+                    # Check if audio file is likely valid (> 10 KB)
+                    if os.path.getsize(full_path) > 10 * 1024:
+                        self.path.append(full_path)
+        elif os.path.isfile(path):
+            # Check if it's a valid audio file and large enough
+            if path.lower().endswith((".wav", ".mp3", ".flac", ".aiff", ".ogg")) and os.path.getsize(path) > 10 * 1024:
+                self.path = [path]
+        else:
+            raise ValueError(f"Invalid path: {path}")
+        
+        # Get the audio filter chain
         self.audio_filter_chain = audio_filter_chain or ",".join([
             # Resample audio file
             f"aresample=resampler=soxr:out_sample_rate={rate}",
@@ -38,186 +42,64 @@ class RecordingROI(RecordingBuffer):
             # Normalize dynamics so embeddings are consistent across files/ROIs
             f"dynaudnorm=b=enabled"
         ])
-
-        with suppress_output():
-            # birdnetlib paramters
-            self.analyzer = Analyzer()
-
-
+    
+    
     def detect_rois(self, min_duration=0.5, max_duration=10.0, fscale="mel", noise_profile=[0.0, 0.5],
                     n_fft=512, hop_length=128, fps=50, display=True):
+        # Set arguments list
+        args_list = [(path, self.fmin, self.fmax, self.audio_filter_chain, noise_profile,
+                    n_fft, hop_length, fps, min_duration, max_duration, fscale, display)
+                    for path in self.path]
         
-        paths = []
-        if os.path.isdir(self.path):
-            # Collect all audio files in the folder
-            for file in os.listdir(self.path):
-                if file.lower().endswith((".wav", ".mp3", ".flac", ".aiff", ".ogg")):
-                    paths.append(os.path.join(self.path, file))
-        else:
-            paths.append(self.path)
+        # Detect the region of interests (ROIs)
+        results = self._multiprocessing(extract_roi_contours, args_list, desc="Detecting region of interests (ROIs)")
+        # Flatten the list of rois
+        self.rois = [roi for sublist in results if sublist is not None for roi in sublist]
 
-        all_rois = []
-
-        for audio_path in tqdm(paths, desc="Detecting region of interests (ROIs)", disable=not self.verbose):
-            image, height, width = convert_audio_to_image(audio_path, self.fmin, self.fmax,
-                                                        self.audio_filter_chain, noise_profile,
-                                                        n_fft, hop_length, fps)
-            converted_image, px_to_freq = convert_pixel_to_frequency(image, self.fmin, self.fmax, height, fscale)
-
-            filtered = cv2.bilateralFilter(converted_image, d=9, sigmaColor=75, sigmaSpace=75)
-            blurred = cv2.GaussianBlur(filtered, (7, 7), 0)
-            _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-            border_thickness = 5
-            border_mask = np.ones_like(thresh, dtype=np.uint8) * 255
-            border_mask[border_thickness:-border_thickness, border_thickness:-border_thickness] = 0
-            processed_image = cv2.bitwise_and(thresh, cv2.bitwise_not(border_mask))
-
-            contours, _ = cv2.findContours(processed_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-            boxes = []
-            for cnt in contours:
-                if cnt is None or len(cnt) == 0:
-                    continue
-
-                x, y, w, h = cv2.boundingRect(cnt.astype(np.int32))
-                duration_roi = w / fps
-
-                if duration_roi < min_duration or (max_duration is not None and duration_roi > max_duration):
-                    continue
-                if w >= width * 0.98 and h >= height * 0.98:
-                    continue
-
-                boxes.append((x, y, x + w, y + h))
-
-            for x1, y1, x2, y2 in boxes:
-                tmin = x1 / fps
-                tmax = x2 / fps
-                fmin = px_to_freq[min(int(y2), height - 1)]
-                fmax = px_to_freq[max(int(y1), 0)]
-
-                all_rois.append({
-                    "path": audio_path,
-                    "tmin": tmin,
-                    "tmax": tmax,
-                    "fmin": fmin,
-                    "fmax": fmax,
-                    "min_duration": min_duration,
-                    "bounds": (x1, y1, x2, y2)
-                })
-
-            if display:
-                import matplotlib.pyplot as plt
-                import matplotlib.patches as patches
-
-                fig, ax = plt.subplots()
-                ax.imshow(converted_image, cmap="gray")
-                for x1, y1, x2, y2 in boxes:
-                    rect = patches.Rectangle((x1, y1), x2 - x1, y2 - y1,
-                                            linewidth=2, edgecolor='lime', facecolor='none')
-                    ax.add_patch(rect)
-                ax.set_title(f"Detected ROIs in {os.path.basename(audio_path)}")
-                plt.show()
-
-        self.rois = all_rois
         return self.rois
-        
-        
+    
+
     def segment_rois(self, rois, noise_reduction=-20, download=False):
-        self.segments = []
-        # Process audio rois into 3-second segments for birdnetlib compatibility
-        total_samples = int(3.0 * self.rate)
+        # Set arguments list
+        args_list = [(roi, self.rate, self.audio_filter_chain, noise_reduction, download) for roi in rois]
 
-        # Iterate over each ROI and segment audio
-        for roi in tqdm(rois, desc="Segmenting ROIs", disable=not self.verbose):
-            # Extract ROI audio using utils function
-            self.ndarray = extract_roi(roi['path'], roi['tmin'], roi['tmax'], roi['fmin'], roi['fmax'], self.audio_filter_chain, noise_reduction, download, rate=self.rate)[0]
+        # Segment the region of interests (ROIs)
+        results = self._multiprocessing(extract_roi_chunks, args_list, desc="Segmenting region of interests (ROIs)")
+        # Flatten the list of segments
+        self.segments = [segment for sublist in results if sublist is not None for segment in sublist]      
 
-            for i in range(0, len(self.ndarray), total_samples):
-                split = self.ndarray[i : i + total_samples]
+        return self.segments  
 
-                # End of signal?
-                if len(split) < int(roi['min_duration'] * self.rate):
-                    break
+    
+    def display_rois(self, embeddings, noise_reduction=-50, frame_width=1400, frame_height=600, point_size=5, port=8080):
+        from display import run_bokeh_server
+        run_bokeh_server(embeddings, self.rate, self.audio_filter_chain, noise_reduction, frame_width, frame_height, point_size, port)
 
-                # Default start index for this chunk (relative to the extracted ROI audio)
-                start_idx = i
-                # Signal chunk too short? Center the split using audio file
-                if len(split) < total_samples:
-                    # Find the center position in the original audio
-                    start_idx = max(0, i - (total_samples - len(split)) // 2)
-                    # Clip indices to valid range
-                    start_idx = max(0, min(start_idx, len(self.ndarray) - total_samples))
-                    end_idx = start_idx + total_samples
-                    split = self.ndarray[start_idx:end_idx]
-                    # If still not enough samples (e.g. entire file shorter than total_samples), pad with zeros
-                    if len(split) < total_samples:
-                        temp = np.zeros(total_samples, dtype=self.ndarray.dtype)
-                        temp[:len(split)] = split
-                        split = temp
-
-                # Extend segments list along with its start index (relative to the ROI audio)
-                self.segments.append({"samples": split, "idx": start_idx, "path": roi['path'], "tmin": roi['tmin'], "fmin": roi['fmin'], "fmax": roi['fmax']})
-
-        return self.segments
-
-
+        
     def birdnet_analysis(self, segments, extract=False, predict=True, min_confidence=0.75):
-        from operator import itemgetter
-        import librosa
+        # Set arguments list
+        args_list = [(seg, self.rate, extract, predict, min_confidence) for seg in segments]
 
-        self.data = []
-        birdnet_sr = 48000
-
-        def build_result(seg, tmin, tmax, embeddings=None, prediction="Unknown", confidence=0.0):
-            result = {
-                "path": seg["path"],
-                "tmin": tmin,
-                "tmax": tmax,
-                "fmin": seg["fmin"],
-                "fmax": seg["fmax"],
-            }
-            if extract:
-                result["embeddings"] = embeddings
-
-            result["prediction"] = prediction
-            result["confidence"] = confidence
-            return result
-
-        for seg in tqdm(segments, desc="Processing segments with BirdNET", disable=not self.verbose):
-            samples = seg["samples"]
-            if self.rate != birdnet_sr:
-                samples = librosa.resample(samples, orig_sr=self.rate, target_sr=birdnet_sr)
-
-            tmin_seg = seg["tmin"] + (seg["idx"] / birdnet_sr)
-            tmax_seg = tmin_seg + 3.0  # BirdNET chunk duration
-
-            embeddings = None
-            prediction = "Unknown"
-            confidence = 0.0
-
-            if extract:
-                embeddings = self.analyzer._return_embeddings([samples])[0].tolist()
-
-            if predict:
-                predictions = self.analyzer.predict(samples)[0]
-                label_scores = dict(zip(self.analyzer.labels, predictions))
-                sorted_labels = sorted(label_scores.items(), key=itemgetter(1), reverse=True)
-                filtered = [item for item in sorted_labels if item[1] >= min_confidence]
-
-                if filtered:
-                    prediction, confidence = filtered[0]
-
-            result = build_result(seg, tmin_seg, tmax_seg, embeddings, prediction, confidence)
-            self.data.append(result)
+        # Analyze the segments
+        results = self._multiprocessing(analyze_segment, args_list, desc="Analyzing segments with BirdNET")
+        # Get the results
+        self.data = results
 
         return self.data
 
 
-    def frequency_analysis(self, predictions):
+    def frequency_analysis(self, predictions, species=None):
+        import numpy as np
         # Get unique detected species with counts
-        preds = np.array([item.get('prediction') for item in predictions])
+        if species is None:
+            preds = np.array([item.get('prediction') for item in predictions])
+        else:
+            filtered_predictions = [d for d in predictions if isinstance(d, dict) and d.get('prediction', '').lower() == species.lower()]
+            preds = np.array([item.get('prediction') for item in filtered_predictions])
+
         unique_species, counts = np.unique(preds, return_counts=True)
+
+        results_dict = {}
 
         if self.verbose:
             print("--------------------------------------------------")
@@ -225,49 +107,112 @@ class RecordingROI(RecordingBuffer):
             print("--------------------------------------------------")
 
         for i in np.argsort(-counts):
-            # Filter embeddings for a specific species
-            filtered = [d for d in predictions if d['prediction'] == unique_species[i]]
+            species = unique_species[i]
+            filtered = [d for d in predictions if d['prediction'] == species]
             confidence = np.array([item.get('confidence') for item in filtered])
-            # Collect fmin and fmax values
-            fmin_values = []
-            fmax_values = []
 
-            for entry in filtered:
-                fmin_values.append(entry['fmin'])
-                fmax_values.append(entry['fmax'])
+            fmin_values = [entry['fmin'] for entry in filtered]
+            fmax_values = [entry['fmax'] for entry in filtered]
 
-            # Calculate frequency range
             fmin_median = np.median(fmin_values) if fmin_values else 0
-            fmax_median = np.median(fmax_values) if fmin_values else 0
+            fmax_median = np.median(fmax_values) if fmax_values else 0
             avg_confidence = np.nanmean(confidence)
-            print(f"{unique_species[i]} ({np.round(fmin_median, 2)} - {np.round(fmax_median,2)} Hz): {counts[i]} detections (avg_confidence={np.round(float(avg_confidence),2)})")
 
+            if self.verbose:
+                print(f"{species} ({np.round(fmin_median, 2)} - {np.round(fmax_median,2)} Hz): {counts[i]} detections (avg_confidence={np.round(float(avg_confidence),2)})")
+
+            results_dict[species] = {
+                "count": int(counts[i]),
+                "fmin_median": float(np.round(fmin_median, 2)),
+                "fmax_median": float(np.round(fmax_median, 2)),
+                "avg_confidence": float(np.round(avg_confidence, 2))
+            }
+
+        return results_dict
     
-    def display_rois(self, embeddings, noise_reduction=-50, frame_width=1400, frame_height=600, point_size=5, port=8080):
-        from display import run_bokeh_server
-        run_bokeh_server(embeddings, self.rate, self.audio_filter_chain, noise_reduction, frame_width, frame_height, point_size, port)
+
+    def repertoire_analysis(self, embeddings, species, min_samples=3, eps='auto', metric='cosine'):
+        import numpy as np
+        from sklearn.neighbors import NearestNeighbors
+        from sklearn.metrics import pairwise_distances
+
+        import hdbscan
+        from kneed import KneeLocator
+
+        # Filter embeddings with the selected species
+        self.repertoire = [d for d in embeddings if isinstance(d, dict) and d.get('prediction', '').lower() == species.lower()]
+        embeddings = np.array([d['embeddings'] for d in self.repertoire if d['embeddings']])
+
+        if eps == 'auto':
+            neighbors = NearestNeighbors(n_neighbors=min_samples, metric=metric)
+            neighbors_fit = neighbors.fit(embeddings)
+            distances, _ = neighbors_fit.kneighbors(embeddings)
+            distances = np.sort(distances[:, 1])
+
+            kneedle = KneeLocator(
+                x=np.arange(len(distances)),
+                y=distances,
+                interp_method="polynomial",
+                curve="convex",
+                direction="increasing"
+            )
+
+            try:
+                e = float(kneedle.knee_y)
+            except:
+                e = float(distances.max())
+        else:
+            e = float(eps)
+
+        # Compute pairwise distances
+        precomputed_distances = pairwise_distances(embeddings, metric=metric)
+        # Clustering with HDBSCAN
+        cluster = hdbscan.HDBSCAN(min_cluster_size=min_samples, cluster_selection_epsilon=e, metric='precomputed').fit(precomputed_distances)
+        labels = cluster.labels_
+        n_clusters = len(np.unique(labels[labels >= 0]))
+
+        if self.verbose:
+            print(f'Number of clusters found (excluding noise): {n_clusters} (min_samples={min_samples}, eps={e})')
+
+        # Update prediction keys with cluster label
+        for i, label in enumerate(labels):
+            if i < len(self.repertoire):
+                self.repertoire[i]['prediction'] = f"Syllable {label}" if label != -1 else "Noise"
+
+        return self.repertoire
+
+
+    def _multiprocessing(self, func, args_list, desc="Multiprocessing"):
+        if self.multiprocessing:
+            with Pool(processes=cpu_count()-1) as pool:
+                results = list(tqdm(pool.imap(func, args_list),
+                                    total=len(args_list),
+                                    desc=desc,
+                                    disable=not self.verbose))
+        else:
+            results = [func(args) for args in tqdm(args_list, desc=desc, disable=not self.verbose)]
+        return results
         
 
 if __name__ == "__main__":
-    # TODO For repertoire analysis noise profile need to be computed on the whole audio file not 3s segments, to be continued
 
     ### Create RecordingROI instance
-    rec = RecordingROI(path="out.wav", rate=48000, fmin=150, fmax=15000)
+    rec = RecordingROI(path="out.wav", rate=48000, fmin=150, fmax=15000, multiprocessing=True)
 
     # Detect region of interests (ROIs) in the recording
     rois = rec.detect_rois(min_duration=0.5, max_duration=10.0, display=False)
-    # Segment ROIs into 3-second audio clips
+    # Segment ROIs into 3-second audio chunks
     segments = rec.segment_rois(rois, noise_reduction=-20, download=False)
 
-    # Predict species with BirdNET
-    predictions = rec.birdnet_analysis(segments, predict=True, min_confidence=0.75)
-    # Analyze frequency range for each detected species
-    rec.frequency_analysis(predictions)
 
-    # # Extract embeddings and predict species with BirdNET
-    # data = rec.birdnet_analysis(segments, extract=True, predict=True, min_confidence=0.75)
-    # # Display ROIs in interactive plot
-    # rec.display_rois(data, noise_reduction=-50)
+    # Extract embeddings and predict species with BirdNET
+    data = rec.birdnet_analysis(segments, extract=True, predict=True, min_confidence=0.75)
+    # Analyze frequency range for each detected species
+    results = rec.frequency_analysis(data)
+    # Analyze the repertoire of the species
+    # data = rec.repertoire_analysis(data, species='Turdus iliacus_Redwing')
+    # Display repertoire in interactive plot
+    rec.display_rois(data, noise_reduction=-50)
 
 
 
