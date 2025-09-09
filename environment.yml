@@ -1,6 +1,14 @@
-name: birdmap
+name: birdroi
 dependencies:
-  - python=3.11
+  - python=3.9
   - pip
   - pip:
-    - https://github.com/birdnet-team/BirdNET-Analyzer/archive/refs/heads/main.zip
+      - birdnetlib==0.18.0
+      - tensorflow==2.15.0
+      - hdbscan==0.8.40
+      - umap-learn==0.5.9.post2
+      - kneed==0.8.5
+      - bokeh==3.4.3
+      - opencv-python==4.11.0.86
+      - librosa==0.11.0
+      - tqdm==4.67.1
