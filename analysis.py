@@ -23,27 +23,23 @@ def analyze_segment(args):
     seg, rate, extract, predict, min_confidence = args
 
     with suppress_output():
-        # birdnetlib parameters
         birdnet_analyzer = Analyzer()
 
-    birdnet_sr = 48000 # BirdNET sampling rate
-    samples = seg["samples"]
+    birdnet_sr = 48000  # BirdNET sampling rate
+    chunk = seg["chunk"]
 
     if rate != birdnet_sr:
-        samples = librosa.resample(samples, orig_sr=rate, target_sr=birdnet_sr)
-
-    tmin_seg = seg["tmin"] + (seg["idx"] / birdnet_sr)
-    tmax_seg = tmin_seg + 3.0  # BirdNET chunk duration
+        chunk = librosa.resample(chunk, orig_sr=rate, target_sr=birdnet_sr)
 
     embeddings = None
     prediction = "Unknown"
     confidence = 0.0
 
     if extract:
-        embeddings = birdnet_analyzer._return_embeddings([samples])[0].tolist()
+        embeddings = birdnet_analyzer._return_embeddings([chunk])[0].tolist()
 
     if predict:
-        predictions = birdnet_analyzer.predict(samples)[0]
+        predictions = birdnet_analyzer.predict(chunk)[0]
         label_scores = dict(zip(birdnet_analyzer.labels, predictions))
         sorted_labels = sorted(label_scores.items(), key=itemgetter(1), reverse=True)
         filtered = [item for item in sorted_labels if item[1] >= min_confidence]
@@ -51,13 +47,12 @@ def analyze_segment(args):
         if filtered:
             prediction, confidence = filtered[0]
 
-    return {
-        "path": seg["path"],
-        "tmin": tmin_seg,
-        "tmax": tmax_seg,
-        "fmin": seg["fmin"],
-        "fmax": seg["fmax"],
+    # Create result dict by unpacking seg and updating only necessary keys
+    result = {
+        **{k: seg[k] for k in ["path", "roi", "chunk", "idx", "tmin", "tmax", "tmin_roi", "tmax_roi", "fmin", "fmax"]},
         "embeddings": embeddings if extract else None,
         "prediction": prediction,
         "confidence": confidence
     }
+
+    return result

@@ -7,6 +7,9 @@ from birdnetlib.main import RecordingBuffer
 from rois import extract_roi_contours, extract_roi_chunks
 from analysis import analyze_segment
 
+import warnings
+warnings.filterwarnings("ignore")
+
 
 class RecordingROI(RecordingBuffer):
     def __init__(self, path, rate=48000, fmin=1, fmax=15000, audio_filter_chain=None, multiprocessing=True, verbose=True):
@@ -132,47 +135,67 @@ class RecordingROI(RecordingBuffer):
     
 
     def repertoire_analysis(self, embeddings, species, min_samples=3, eps='auto', metric='cosine'):
+        import math
         import numpy as np
         from sklearn.neighbors import NearestNeighbors
         from sklearn.metrics import pairwise_distances
 
         import hdbscan
+        from hdbscan.validity import validity_index
         from kneed import KneeLocator
 
         # Filter embeddings with the selected species
         self.repertoire = [d for d in embeddings if isinstance(d, dict) and d.get('prediction', '').lower() == species.lower()]
         embeddings = np.array([d['embeddings'] for d in self.repertoire if d['embeddings']])
 
-        if eps == 'auto':
-            neighbors = NearestNeighbors(n_neighbors=min_samples, metric=metric)
-            neighbors_fit = neighbors.fit(embeddings)
-            distances, _ = neighbors_fit.kneighbors(embeddings)
-            distances = np.sort(distances[:, 1])
+        # Automatic estimation of the clustering algorithm parameters
+        best_score = None
 
-            kneedle = KneeLocator(
-                x=np.arange(len(distances)),
-                y=distances,
-                interp_method="polynomial",
-                curve="convex",
-                direction="increasing"
-            )
+        while True:
+            if eps == 'auto':
+                neighbors = NearestNeighbors(n_neighbors=min_samples, metric=metric)
+                neighbors_fit = neighbors.fit(embeddings)
+                distances, _ = neighbors_fit.kneighbors(embeddings)
+                distances = np.sort(distances[:, 1])
 
-            try:
-                e = float(kneedle.knee_y)
-            except:
-                e = float(distances.max())
-        else:
-            e = float(eps)
+                kneedle = KneeLocator(
+                    x=np.arange(len(distances)),
+                    y=distances,
+                    interp_method="polynomial",
+                    curve="convex",
+                    direction="increasing"
+                )
 
-        # Compute pairwise distances
-        precomputed_distances = pairwise_distances(embeddings, metric=metric)
-        # Clustering with HDBSCAN
-        cluster = hdbscan.HDBSCAN(min_cluster_size=min_samples, cluster_selection_epsilon=e, metric='precomputed').fit(precomputed_distances)
-        labels = cluster.labels_
-        n_clusters = len(np.unique(labels[labels >= 0]))
+                try:
+                    e = float(kneedle.knee_y)
+                except:
+                    e = float(distances.max())
+            else:
+                e = float(eps)
+
+            # Compute pairwise distances
+            precomputed_distances = pairwise_distances(embeddings, metric=metric)
+            # Clustering with HDBSCAN
+            cluster = hdbscan.HDBSCAN(min_cluster_size=min_samples, cluster_selection_epsilon=e, metric='precomputed').fit(precomputed_distances)
+
+            labels = cluster.labels_
+            n_clusters = len(np.unique(labels[labels >= 0]))
+
+            # Evaluate default BirdNET embeddings with DBCV score
+            dbcv = validity_index(embeddings.astype('float64'), cluster.labels_, metric=metric)
+            # Check if DBCV score is not a number
+            if math.isnan(dbcv):
+                dbcv = 0.0
+
+            if best_score is not None and dbcv <= best_score:
+                break
+            else:
+                best_score = dbcv
+                # Increment the number of samples
+                min_samples += 1
 
         if self.verbose:
-            print(f'Number of clusters found (excluding noise): {n_clusters} (min_samples={min_samples}, eps={e})')
+            print(f'Number of clusters found (excluding noise): {n_clusters} (dbcv={best_score}, min_samples={min_samples}, eps={e})')
 
         # Update prediction keys with cluster label
         for i, label in enumerate(labels):
@@ -197,73 +220,57 @@ class RecordingROI(RecordingBuffer):
 if __name__ == "__main__":
 
     ### Create RecordingROI instance
-    rec = RecordingROI(path="out.wav", rate=48000, fmin=150, fmax=15000, multiprocessing=True)
+    rec = RecordingROI(path="Chloris_chloris", rate=48000, fmin=1, fmax=15000, multiprocessing=True)
 
     # Detect region of interests (ROIs) in the recording
     rois = rec.detect_rois(min_duration=0.5, max_duration=10.0, display=False)
     # Segment ROIs into 3-second audio chunks
-    segments = rec.segment_rois(rois, noise_reduction=-20, download=False)
-
+    segments = rec.segment_rois(rois, noise_reduction='-INF', download=False)
 
     # Extract embeddings and predict species with BirdNET
-    data = rec.birdnet_analysis(segments, extract=True, predict=True, min_confidence=0.75)
+    data = rec.birdnet_analysis(segments, extract=True, predict=True, min_confidence=0.25)
     # Analyze frequency range for each detected species
-    results = rec.frequency_analysis(data)
-    # Analyze the repertoire of the species
-    # data = rec.repertoire_analysis(data, species='Turdus iliacus_Redwing')
-    # Display repertoire in interactive plot
-    rec.display_rois(data, noise_reduction=-50)
-
-
-
-
-    ### REPERTOIRE ANALYSIS
-
-
-
-    # ### CLUSTER ROIS AND PREDICT 
-    # from clustering import ClusterROI   
-
-    # predictions = np.array([item['prediction'] for item in embeddings])
-    # confidence = np.array([item['confidence'] for item in embeddings])
-
-    # clusterer = ClusterROI(embeddings)
-    # clusterer.cluster_rois(predictions)
-    # # clusterer.predict_cluster(label=-1)
-
-    # for label in np.unique(clusterer.labels):
-    #     if label == None:
-    #         continue
-
-    #     cluster_predictions = predictions[clusterer.labels == label]
-    #     cluster_confidence = confidence[clusterer.labels == label]
-
-    #     # Count frequency of each species
-    #     unique_species, counts = np.unique(cluster_predictions, return_counts=True)
-    #     most_frequent_species = unique_species[np.argmax(counts)]
-
-    #     if most_frequent_species == "Unknown":
-    #         print(f"Label {label} ({len(cluster_predictions)} ROIs): Prediction → Unknown, Confidence not considered.")
-    #         continue
-
-    #     # Compute weighted score for each species
-    #     species_scores = {}
-    #     for species in np.unique(cluster_predictions):
-    #         mask = cluster_predictions == species
-    #         avg_conf = np.mean(cluster_confidence[mask])
-    #         freq = np.sum(mask)
-    #         score = avg_conf * np.log(freq + 1) # Confidence-weighted frequency score
-    #         species_scores[species] = (score, avg_conf, freq)
-
-    #     # Select species with highest score
-    #     best_species, (best_score, best_conf, best_freq) = max(species_scores.items(), key=lambda x: x[1][0])
-    #     print(f"Label {label} ({len(cluster_predictions)} ROIs): Prediction → {best_species}, Confidence → {best_conf:.2f}")
-
-
-
-    # "Turdus_iliacus/XC101610.wav"
-    # "SMA04635_20220318_182700.wav"
+    results = rec.frequency_analysis(data, species='Chloris chloris_European Greenfinch') # Chloris chloris_European Greenfinch
+    # # Analyze the repertoire of the species
+    data = rec.repertoire_analysis(data, species='Chloris chloris_European Greenfinch') # Turdus iliacus_Redwing
     
-    # "Tinamus major/64136_24.00-27.00.wav"
-    # "data/SMA04786_20220113_182200.wav"
-    # "Nyctibius bracteatus/5071_3.00-6.00.wav"
+    # Display repertoire in interactive plot
+    rec.display_rois(data, noise_reduction='-INF')
+
+
+
+
+
+
+    # def filter_by_idx_successions(data):
+    #     if not data:
+    #         return []
+
+    #     filtered = []
+    #     group = [data[0]]
+
+    #     def is_strictly_increasing(group):
+    #         return all(group[i]['idx'] == group[0]['idx'] + i for i in range(len(group)))
+
+    #     for i in range(1, len(data)):
+    #         current = data[i]
+    #         previous = data[i - 1]
+
+    #         if current['idx'] == previous['idx'] + 1:
+    #             group.append(current)
+    #         else:
+    #             if is_strictly_increasing(group) and len(group) > 1:
+    #                 filtered.append(max(group, key=lambda x: x['confidence']))
+    #             else:
+    #                 filtered.extend(group)
+    #             group = [current]
+
+    #     # Handle the last group
+    #     if is_strictly_increasing(group) and len(group) > 1:
+    #         filtered.append(max(group, key=lambda x: x['confidence']))
+    #     else:
+    #         filtered.extend(group)
+
+    #     return filtered
+
+    # filtered = filter_by_idx_successions(data)

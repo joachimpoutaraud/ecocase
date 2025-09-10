@@ -165,39 +165,51 @@ def extract_roi_chunks(args):
     # Get the arguments
     roi, rate, audio_filter_chain, noise_reduction, download = args
     # Split audio rois into 3-second chunks for birdnetlib compatibility
-    total_samples = int(3.0 * rate)
+    chunk_duration = 3.0  # seconds
+    total_samples = int(chunk_duration * rate)
 
     try:
         # Extract ROI from audio
         ndarray = extract_roi_audio(roi['path'], roi['tmin'], roi['tmax'], roi['fmin'], roi['fmax'], audio_filter_chain, noise_reduction, download, rate=rate)[0]
 
         chunks = []
+        num_samples = len(ndarray)
+        chunk_idx = 0
+        duration = roi['tmax'] - roi['tmin']
+        seconds_per_sample = duration / num_samples
 
-        for i in range(0, len(ndarray), total_samples):
-            split = ndarray[i : i + total_samples]
+        for i in range(0, num_samples, total_samples):
+            chunk = ndarray[i:i + total_samples]
 
-            # End of signal?
-            if len(split) < int(roi['min_duration'] * rate):
-                break
+            # Pad with remaining audio if available
+            if len(chunk) < total_samples:
+                next_samples = ndarray[i + len(chunk):i + total_samples]
+                chunk = np.concatenate((chunk, next_samples))
 
-            # Default start index for this chunk (relative to the extracted ROI audio)
-            start_idx = i
-            # Signal chunk too short? Center the split using audio file
-            if len(split) < total_samples:
-                # Find the center position in the original audio
-                start_idx = max(0, i - (total_samples - len(split)) // 2)
-                # Clip indices to valid range
-                start_idx = max(0, min(start_idx, len(ndarray) - total_samples))
-                end_idx = start_idx + total_samples
-                split = ndarray[start_idx:end_idx]
-                # If still not enough samples (e.g. entire file shorter than total_samples), pad with zeros
-                if len(split) < total_samples:
-                    temp = np.zeros(total_samples, dtype=ndarray.dtype)
-                    temp[:len(split)] = split
-                    split = temp
+                # If still not enough, pad with zeros
+                if len(chunk) < total_samples:
+                    padded = np.zeros(total_samples, dtype=ndarray.dtype)
+                    padded[:len(chunk)] = chunk
+                    chunk = padded
 
-            # Extend chunks list along with its start index (relative to the ROI audio)
-            chunks.append({"samples": split, "idx": start_idx, "path": roi['path'], "tmin": roi['tmin'], "fmin": roi['fmin'], "fmax": roi['fmax']})
+            # Calculate tmin and tmax based on start and end of chunk
+            tmin_chunk = roi['tmin'] + i * seconds_per_sample
+            tmax_chunk = tmin_chunk + total_samples * seconds_per_sample
+
+            chunks.append({
+                "path": roi['path'],
+                "roi": ndarray,
+                "chunk": chunk,
+                "idx": chunk_idx,
+                "tmin": tmin_chunk,
+                "tmax": tmax_chunk,
+                "tmin_roi": roi['tmin'],
+                "tmax_roi": roi['tmax'],
+                "fmin": roi['fmin'],
+                "fmax": roi['fmax']
+            })
+
+            chunk_idx += 1
 
     except Exception as e:
         print(f"Error processing ROI {roi['path']}: {e}")
