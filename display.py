@@ -184,7 +184,6 @@ def run_bokeh_server(embeddings, rate, audio_filter_chain=None, noise_reduction=
 
         reset_button = Button(label="Reset", button_type="warning")
         reset_button.on_click(reset_all)
-    
 
         # Attach the reset button to the buttons row.
         # This callback will run on the next tick when centered_buttons exists.

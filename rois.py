@@ -62,27 +62,28 @@ def extract_roi_audio(path, tmin, tmax, fmin, fmax, audio_filter_chain=None, noi
             print("FFmpeg error:", error.decode())
 
     roi_audio = np.frombuffer(audio_bytes, dtype=np.float32)
+    roi_audio_int16 = (roi_audio * 32767).astype(np.int16)
 
     if download:
         return roi_audio, output_path
 
     if encode == 'audio':
         buf = io.BytesIO()
-        wavfile.write(buf, rate, roi_audio)
+        wavfile.write(buf, rate, roi_audio_int16)
         buf.seek(0)
         b64 = base64.b64encode(buf.read()).decode('ascii')
         return f"data:audio/wav;base64,{b64}"
 
+
     if encode == 'spectrogram':
-        roi_audio_scaled = (roi_audio * 32767).astype(np.int16)
-        f, t, Sxx = spectrogram(roi_audio_scaled, fs=rate)
+        f, t, Sxx = spectrogram(roi_audio_int16, fs=rate)
         Sxx_db = 10 * np.log10(np.abs(Sxx)**2 + 1e-10)
 
         plt.figure(figsize=(4, 2))
         plt.pcolormesh(t, f, Sxx_db, shading='auto', cmap='gray')
         plt.ylabel('Frequency [Hz]')
         plt.xlabel('Time [sec]')
-        plt.title('Spectrogram')
+        plt.title(f'{path}')
         buf_img = io.BytesIO()
         plt.savefig(buf_img, format='png', bbox_inches='tight', pad_inches=0)
         plt.close()
@@ -167,6 +168,7 @@ def extract_roi_chunks(args):
     # Split audio rois into 3-second chunks for birdnetlib compatibility
     chunk_duration = 3.0  # seconds
     total_samples = int(chunk_duration * rate)
+    seconds_per_sample = 1.0 / rate
 
     try:
         # Extract ROI from audio
@@ -181,16 +183,29 @@ def extract_roi_chunks(args):
         for i in range(0, num_samples, total_samples):
             chunk = ndarray[i:i + total_samples]
 
-            # Pad with remaining audio if available
+            # Pad with zeros if chunk is shorter than total_samples
             if len(chunk) < total_samples:
-                next_samples = ndarray[i + len(chunk):i + total_samples]
-                chunk = np.concatenate((chunk, next_samples))
+                padded = np.zeros(total_samples, dtype=ndarray.dtype)
+                padded[:len(chunk)] = chunk
+                chunk = padded
 
-                # If still not enough, pad with zeros
-                if len(chunk) < total_samples:
-                    padded = np.zeros(total_samples, dtype=ndarray.dtype)
-                    padded[:len(chunk)] = chunk
-                    chunk = padded
+            # Calculate chunk time boundaries
+            tmin_chunk = round(roi['tmin'] + i * seconds_per_sample, 2)
+            tmax_chunk = tmin_chunk + chunk_duration
+
+        # for i in range(0, num_samples, total_samples):
+        #     chunk = ndarray[i:i + total_samples]
+
+        #     # Pad with remaining audio if available
+        #     if len(chunk) < total_samples:
+        #         next_samples = ndarray[i + len(chunk):i + total_samples]
+        #         chunk = np.concatenate((chunk, next_samples))
+
+        #         # If still not enough, pad with zeros
+        #         if len(chunk) < total_samples:
+        #             padded = np.zeros(total_samples, dtype=ndarray.dtype)
+        #             padded[:len(chunk)] = chunk
+        #             chunk = padded
 
             # Calculate tmin and tmax based on start and end of chunk
             tmin_chunk = roi['tmin'] + i * seconds_per_sample

@@ -78,15 +78,35 @@ class RecordingROI(RecordingBuffer):
         from display import run_bokeh_server
         run_bokeh_server(embeddings, self.rate, self.audio_filter_chain, noise_reduction, frame_width, frame_height, point_size, port)
 
-        
-    def birdnet_analysis(self, segments, extract=False, predict=True, min_confidence=0.75):
+
+    def birdnet_analysis(self, segments, extract=False, predict=True, min_confidence=0.75, save=True, save_path="birdnet_results.npy"):
+        """
+        Analyze audio segments using BirdNET and optionally save results as a .npy file.
+
+        Parameters:
+            segments (list): List of segment dictionaries.
+            extract (bool): Whether to extract audio before prediction.
+            predict (bool): Whether to run BirdNET prediction.
+            min_confidence (float): Minimum confidence threshold for predictions.
+            save (bool): If True, saves results to a .npy file.
+            save_path (str): Path to save the .npy results file.
+
+        Returns:
+            list: Analysis results.
+        """
         # Set arguments list
         args_list = [(seg, self.rate, extract, predict, min_confidence) for seg in segments]
 
         # Analyze the segments
         results = self._multiprocessing(analyze_segment, args_list, desc="Analyzing segments with BirdNET")
-        # Get the results
+
+        # Store results
         self.data = results
+
+        # Save to .npy file if requested
+        if save:
+            import numpy as np
+            np.save(save_path, results)
 
         return self.data
 
@@ -134,73 +154,55 @@ class RecordingROI(RecordingBuffer):
         return results_dict
     
 
-    def repertoire_analysis(self, embeddings, species, min_samples=3, eps='auto', metric='cosine'):
-        import math
+    def repertoire_analysis(self, embeddings, species, min_cluster_size=3, max_cluster_size=15, metric='euclidean', keep_noise=False):
         import numpy as np
-        from sklearn.neighbors import NearestNeighbors
-        from sklearn.metrics import pairwise_distances
-
         import hdbscan
         from hdbscan.validity import validity_index
-        from kneed import KneeLocator
+        import umap
 
         # Filter embeddings with the selected species
         self.repertoire = [d for d in embeddings if isinstance(d, dict) and d.get('prediction', '').lower() == species.lower()]
-        embeddings = np.array([d['embeddings'] for d in self.repertoire if d['embeddings']])
+        embeddings = np.array([d['embeddings'] for d in self.repertoire if d.get('embeddings') is not None])
 
-        # Automatic estimation of the clustering algorithm parameters
-        best_score = None
+        # Apply UMAP dimensionality reduction
+        reducer = umap.UMAP(n_components=2, random_state=2025, metric=metric)
+        reduced_embeddings = reducer.fit_transform(embeddings)
 
-        while True:
-            if eps == 'auto':
-                neighbors = NearestNeighbors(n_neighbors=min_samples, metric=metric)
-                neighbors_fit = neighbors.fit(embeddings)
-                distances, _ = neighbors_fit.kneighbors(embeddings)
-                distances = np.sort(distances[:, 1])
+        # Find best clustering
+        best_score = -np.inf
+        best_labels = None
+        best_min_cluster_size = None
 
-                kneedle = KneeLocator(
-                    x=np.arange(len(distances)),
-                    y=distances,
-                    interp_method="polynomial",
-                    curve="convex",
-                    direction="increasing"
-                )
+        for i in range(min_cluster_size, max_cluster_size + min_cluster_size, min_cluster_size):
+            cluster = hdbscan.HDBSCAN(min_cluster_size=i, metric=metric).fit(reduced_embeddings)
+            dbcv = validity_index(reduced_embeddings.astype('float64'), cluster.labels_, metric=metric)
 
-                try:
-                    e = float(kneedle.knee_y)
-                except:
-                    e = float(distances.max())
-            else:
-                e = float(eps)
-
-            # Compute pairwise distances
-            precomputed_distances = pairwise_distances(embeddings, metric=metric)
-            # Clustering with HDBSCAN
-            cluster = hdbscan.HDBSCAN(min_cluster_size=min_samples, cluster_selection_epsilon=e, metric='precomputed').fit(precomputed_distances)
-
-            labels = cluster.labels_
-            n_clusters = len(np.unique(labels[labels >= 0]))
-
-            # Evaluate default BirdNET embeddings with DBCV score
-            dbcv = validity_index(embeddings.astype('float64'), cluster.labels_, metric=metric)
-            # Check if DBCV score is not a number
-            if math.isnan(dbcv):
-                dbcv = 0.0
-
-            if best_score is not None and dbcv <= best_score:
-                break
-            else:
+            if dbcv > best_score:
                 best_score = dbcv
-                # Increment the number of samples
-                min_samples += 1
+                best_labels = cluster.labels_
+                best_min_cluster_size = i
+
+        n_clusters = len(np.unique(best_labels[best_labels >= 0]))
 
         if self.verbose:
-            print(f'Number of clusters found (excluding noise): {n_clusters} (dbcv={best_score}, min_samples={min_samples}, eps={e})')
+            print(f'Number of clusters found (excluding noise): {n_clusters} (min_cluster_size={best_min_cluster_size}, dbcv={best_score})')
 
-        # Update prediction keys with cluster label
-        for i, label in enumerate(labels):
-            if i < len(self.repertoire):
-                self.repertoire[i]['prediction'] = f"Syllable {label}" if label != -1 else "Noise"
+        # Update tmin/tmax, embeddings, and prediction
+        for i, d in enumerate(self.repertoire):
+            if 'tmin_roi' in d:
+                d['tmin'] = d['tmin_roi']
+            if 'tmax_roi' in d:
+                d['tmax'] = d['tmax_roi']
+
+            d['embeddings'] = reduced_embeddings[i]
+
+            if i < len(best_labels):
+                label = best_labels[i]
+                d['prediction'] = f"Syllable {label}" if label != -1 else "Noise"
+
+        if keep_noise is not True:
+            # Remove all entries labeled as "Noise"
+            self.repertoire = [d for d in self.repertoire if d.get('prediction') != "Noise"]
 
         return self.repertoire
 
@@ -220,57 +222,23 @@ class RecordingROI(RecordingBuffer):
 if __name__ == "__main__":
 
     ### Create RecordingROI instance
-    rec = RecordingROI(path="Chloris_chloris", rate=48000, fmin=1, fmax=15000, multiprocessing=True)
+    rec = RecordingROI(path="Turdus_iliacus", rate=48000, fmin=1, fmax=15000, multiprocessing=True)
 
     # Detect region of interests (ROIs) in the recording
     rois = rec.detect_rois(min_duration=0.5, max_duration=10.0, display=False)
     # Segment ROIs into 3-second audio chunks
-    segments = rec.segment_rois(rois, noise_reduction='-INF', download=False)
+    segments = rec.segment_rois(rois, noise_reduction='-INF')
 
     # Extract embeddings and predict species with BirdNET
-    data = rec.birdnet_analysis(segments, extract=True, predict=True, min_confidence=0.25)
-    # Analyze frequency range for each detected species
-    results = rec.frequency_analysis(data, species='Chloris chloris_European Greenfinch') # Chloris chloris_European Greenfinch
-    # # Analyze the repertoire of the species
-    data = rec.repertoire_analysis(data, species='Chloris chloris_European Greenfinch') # Turdus iliacus_Redwing
+    data = rec.birdnet_analysis(segments, extract=True, predict=True, min_confidence=0.25, save_path='turdus.npy')
+
+    # import numpy as np
+    # data = np.load('turdus.npy', allow_pickle=True)
+
+    # Analyze frequency range of the species
+    results = rec.frequency_analysis(data, species='Turdus iliacus_Redwing') # Chloris chloris_European Greenfinch
+    # Analyze repertoire of the species
+    data = rec.repertoire_analysis(data, species='Turdus iliacus_Redwing', min_cluster_size=20, max_cluster_size=60) # Turdus iliacus_Redwing
     
-    # Display repertoire in interactive plot
+    # Display rois in interactive plot
     rec.display_rois(data, noise_reduction='-INF')
-
-
-
-
-
-
-    # def filter_by_idx_successions(data):
-    #     if not data:
-    #         return []
-
-    #     filtered = []
-    #     group = [data[0]]
-
-    #     def is_strictly_increasing(group):
-    #         return all(group[i]['idx'] == group[0]['idx'] + i for i in range(len(group)))
-
-    #     for i in range(1, len(data)):
-    #         current = data[i]
-    #         previous = data[i - 1]
-
-    #         if current['idx'] == previous['idx'] + 1:
-    #             group.append(current)
-    #         else:
-    #             if is_strictly_increasing(group) and len(group) > 1:
-    #                 filtered.append(max(group, key=lambda x: x['confidence']))
-    #             else:
-    #                 filtered.extend(group)
-    #             group = [current]
-
-    #     # Handle the last group
-    #     if is_strictly_increasing(group) and len(group) > 1:
-    #         filtered.append(max(group, key=lambda x: x['confidence']))
-    #     else:
-    #         filtered.extend(group)
-
-    #     return filtered
-
-    # filtered = filter_by_idx_successions(data)
