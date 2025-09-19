@@ -103,21 +103,21 @@ class XenoCanto():
     def __init__(
                 self,
                 params_xc = [                 
-                    'grp:birds',                      # Group to which the species belongs (birds, bats, frogs, grasshoppers) 
-                    'type:song',                      # Type of the bird sound
-                    'len:"3-100"',                    # Length of the recording (seconds)
-                    'q:">C"',                         # Quality rating of the recording
-                    # 'area:america',                   # Continental area: africa, america, asia, australia, europe
+                    'grp:birds',                 # Group to which the species belongs (birds, bats, frogs, grasshoppers) 
+                    'len:"3-60"',                # Length of the recording (seconds)
+                    'q:">C"',                    # Quality rating of the recording
+                    # 'area:america',              # Continental area: africa, america, asia, australia, europe
                     # 'box:-5.681584,-71.740723,9.535749,-38.364258', # Geographical bounding box (min_lat, min_lon, max_lat, max_lon)
                     # Radius search easily made using bboxfinder.com (coordinate format:"Lat / Lng" + draw a circle with radius ~ 500km, and copy map)
                 ],
-                species_xc = ['Chloris chloris'],
-                num_files = 50,
+                species_xc = ['chloris chloris'],
+                num_files = None,
                 format_time = False,
                 format_date = False,
                 verbose = True,
-                save_path = 'xc_dataset',
+                save_path = '',
                 overwrite = True,
+                multiprocessing = False
                 ):
 
         self.params_xc = params_xc
@@ -128,6 +128,7 @@ class XenoCanto():
         self.verbose = verbose
         self.save_path = save_path
         self.overwrite = overwrite
+        self.multiprocessing = multiprocessing
 
 
     def dataset(self, csv_filename=None, download=False):
@@ -317,9 +318,16 @@ class XenoCanto():
                         
         # Convert length column to seconds
         def convert_to_seconds(length_str):
-            length = time.strptime(length_str, '%M:%S')
-            length_seconds = int(datetime.timedelta(hours=length.tm_hour, minutes=length.tm_min, seconds=length.tm_sec).total_seconds())
-            return length_seconds
+            parts = length_str.split(':')
+            if len(parts) == 2:
+                minutes, seconds = map(int, parts)
+                total_seconds = minutes * 60 + seconds
+            elif len(parts) == 3:
+                hours, minutes, seconds = map(int, parts)
+                total_seconds = hours * 3600 + minutes * 60 + seconds
+            else:
+                raise ValueError(f"Unexpected time format: {length_str}")
+            return total_seconds
         
         df['length'] = df['length'].apply(convert_to_seconds) 
                 
@@ -339,69 +347,76 @@ class XenoCanto():
     def download(self, dataset=None, csv_filename=None):
         """
         Download audio files from XenoCanto.
-        
+
         Args:
             dataset (str or pd.DataFrame, optional): Path to the dataset CSV file or a pandas DataFrame. Default is None.
             csv_filename (str, optional): The name of the csv file to save the ROIs. Default is None.
+            use_multiprocessing (bool, optional): Whether to use multiprocessing for downloading. Default is True.
         """ 
-            
         if self.verbose:
             print('\n====================== DOWNLOAD AUDIO FILES ======================\n')
 
-        # Check if dataset is a path to a dataframe, audio file or folder
-        if type(dataset) == str:
+        # Load dataset if it's a path
+        if isinstance(dataset, str):
             ext = os.path.splitext(dataset)[1]
-            # Check file extension
             if ext == ".csv": 
                 import pandas as pd
                 self.df = pd.read_csv(dataset, sep=";")        
 
-        # Create folders for each species if needed
+        # Create folders for each species
         if 'categories' in self.df.columns:
             species_list = [s.replace(' ', '_') for s in self.df.categories.unique()]
-
-            # Create folders for each species
             for species in species_list:
                 os.makedirs(os.path.join(self.save_path, species), exist_ok=True)
 
         local_file_paths, tasks = [], []
-        
-        with Pool(processes=max(1, cpu_count()-1)) as pool:
-            # Prepare arguments for parallel processing
-            for _, row in self.df.iterrows():
-                path = row['file']
 
-                if 'start' in row:
-                    file_path = os.path.join(
+        def prepare_file_path(row):
+            if 'start' in row:
+                return os.path.join(
                     self.save_path,
                     row['categories'].replace(' ', '_'),
                     f"XC{int(row['id'])}_{float(row['start'])}_{float(row['end'])}.wav"
-                    )
-                else:
-                    file_path = os.path.join(
+                )
+            else:
+                return os.path.join(
                     self.save_path,
                     row['categories'].replace(' ', '_'),
                     f"XC{int(row['id'])}.wav"
-                    )
+                )
 
-                try:
-                    # Append parallel processing tasks for downloading audio with local file paths
-                    tasks.append(pool.apply_async(partial(load_audio, path, output_path=file_path, download=True)))
-                    local_file_paths.append(file_path)
-                except:
-                    pass
+        if self.multiprocessing:
+            with Pool(processes=max(1, cpu_count() - 1)) as pool:
+                for _, row in self.df.iterrows():
+                    path = row['file']
+                    file_path = prepare_file_path(row)
+                    try:
+                        tasks.append(pool.apply_async(partial(load_audio, path, output_path=file_path, download=True)))
+                        local_file_paths.append(file_path)
+                    except:
+                        pass
 
-            with tqdm.tqdm(total=len(tasks), desc="Download audio files") as pbar:
-                for task in tasks:
-                    task.get()
+                with tqdm.tqdm(total=len(tasks), desc="Download audio files") as pbar:
+                    for task in tasks:
+                        task.get()
+                        pbar.update(1)
+        else:
+            with tqdm.tqdm(total=len(self.df), desc="Download audio files") as pbar:
+                for _, row in self.df.iterrows():
+                    path = row['file']
+                    file_path = prepare_file_path(row)
+                    try:
+                        load_audio(path, output_path=file_path, download=True)
+                        local_file_paths.append(file_path)
+                    except:
+                        pass
                     pbar.update(1)
 
+        # Save updated dataframe if requested
         if csv_filename is not None:
-            # Format save_path into Path
+            from pathlib import Path
             save_path = Path(self.save_path)
-            # Save and append dataframe 
             csv_filename = save_path / csv_filename
-            # Update the audio file paths of the dataframe 
             self.df['file'] = local_file_paths         
             self.df.to_csv(csv_filename, index=False, sep=";")
 

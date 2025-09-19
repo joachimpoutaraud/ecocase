@@ -1,8 +1,6 @@
 import numpy as np
 import webbrowser
 
-import umap
-
 from bokeh.plotting import figure
 from bokeh.models import ColumnDataSource, Button, Div, CustomJS, TapTool
 from bokeh.layouts import column, row
@@ -15,7 +13,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 
-def run_bokeh_server(embeddings, rate, audio_filter_chain=None, noise_reduction=-50, frame_width=1400, frame_height=600, point_size=5, port=8080):
+def run_bokeh_server(embeddings, rate, audio_filter_chain=None, noise_reduction=-20, frame_width=1400, frame_height=600, point_size=5, port=8080, random_state=2025):
     # Prepare data
     labels = np.array([item.get('prediction') for item in embeddings])
 
@@ -25,7 +23,8 @@ def run_bokeh_server(embeddings, rate, audio_filter_chain=None, noise_reduction=
         X = np.nan_to_num(X)
 
         if X.shape[1] > 2:
-            reducer = umap.UMAP(n_components=2, random_state=2025)
+            import umap
+            reducer = umap.UMAP(random_state=random_state)
             labels_arr = np.asarray(labels).astype(str)
             mask = labels_arr != 'Unknown'
             y = np.full(labels_arr.shape, -1, dtype=int)
@@ -39,7 +38,6 @@ def run_bokeh_server(embeddings, rate, audio_filter_chain=None, noise_reduction=
         unique_labels = np.unique(labels_arr).astype(str).tolist()
 
         x, y = X[:, 0], X[:, 1]
-
         label_to_idx = {lbl: i for i, lbl in enumerate(unique_labels)}
 
         try:

@@ -2,6 +2,7 @@ import os, subprocess
 import io, base64
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 from scipy.io import wavfile
 from scipy.signal import spectrogram
 
@@ -145,9 +146,6 @@ def extract_roi_contours(args):
             })
 
         if display:
-            import matplotlib.pyplot as plt
-            import matplotlib.patches as patches
-
             fig, ax = plt.subplots()
             ax.imshow(converted_image, cmap="gray")
             for x1, y1, x2, y2 in boxes:
@@ -163,53 +161,38 @@ def extract_roi_contours(args):
 
 
 def extract_roi_chunks(args):
-    # Get the arguments
     roi, rate, audio_filter_chain, noise_reduction, download = args
-    # Split audio rois into 3-second chunks for birdnetlib compatibility
+
     chunk_duration = 3.0  # seconds
     total_samples = int(chunk_duration * rate)
-    seconds_per_sample = 1.0 / rate
 
     try:
-        # Extract ROI from audio
-        ndarray = extract_roi_audio(roi['path'], roi['tmin'], roi['tmax'], roi['fmin'], roi['fmax'], audio_filter_chain, noise_reduction, download, rate=rate)[0]
+        # Extract ROI audio
+        ndarray = extract_roi_audio(
+            roi['path'], roi['tmin'], roi['tmax'],
+            roi['fmin'], roi['fmax'],
+            audio_filter_chain, noise_reduction, download, rate=rate
+        )[0]
 
-        chunks = []
         num_samples = len(ndarray)
-        chunk_idx = 0
         duration = roi['tmax'] - roi['tmin']
         seconds_per_sample = duration / num_samples
+
+        chunks = []
+        chunk_idx = 0
 
         for i in range(0, num_samples, total_samples):
             chunk = ndarray[i:i + total_samples]
 
-            # Pad with zeros if chunk is shorter than total_samples
+            # Pad the last chunk if it's shorter than total_samples
             if len(chunk) < total_samples:
                 padded = np.zeros(total_samples, dtype=ndarray.dtype)
                 padded[:len(chunk)] = chunk
                 chunk = padded
 
-            # Calculate chunk time boundaries
-            tmin_chunk = round(roi['tmin'] + i * seconds_per_sample, 2)
-            tmax_chunk = tmin_chunk + chunk_duration
-
-        # for i in range(0, num_samples, total_samples):
-        #     chunk = ndarray[i:i + total_samples]
-
-        #     # Pad with remaining audio if available
-        #     if len(chunk) < total_samples:
-        #         next_samples = ndarray[i + len(chunk):i + total_samples]
-        #         chunk = np.concatenate((chunk, next_samples))
-
-        #         # If still not enough, pad with zeros
-        #         if len(chunk) < total_samples:
-        #             padded = np.zeros(total_samples, dtype=ndarray.dtype)
-        #             padded[:len(chunk)] = chunk
-        #             chunk = padded
-
-            # Calculate tmin and tmax based on start and end of chunk
+            # Calculate time boundaries for the chunk
             tmin_chunk = roi['tmin'] + i * seconds_per_sample
-            tmax_chunk = tmin_chunk + total_samples * seconds_per_sample
+            tmax_chunk = tmin_chunk + chunk_duration
 
             chunks.append({
                 "path": roi['path'],
@@ -228,5 +211,6 @@ def extract_roi_chunks(args):
 
     except Exception as e:
         print(f"Error processing ROI {roi['path']}: {e}")
+        chunks = []
 
     return chunks

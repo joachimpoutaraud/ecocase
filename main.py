@@ -1,4 +1,5 @@
 import os
+import numpy as np
 from tqdm import tqdm
 from multiprocessing import Pool, cpu_count
 
@@ -112,7 +113,6 @@ class RecordingROI(RecordingBuffer):
 
 
     def frequency_analysis(self, predictions, species=None):
-        import numpy as np
         # Get unique detected species with counts
         if species is None:
             preds = np.array([item.get('prediction') for item in predictions])
@@ -154,38 +154,48 @@ class RecordingROI(RecordingBuffer):
         return results_dict
     
 
-    def repertoire_analysis(self, embeddings, species, min_cluster_size=3, max_cluster_size=15, metric='euclidean', keep_noise=False):
-        import numpy as np
-        import hdbscan
-        from hdbscan.validity import validity_index
+    def repertoire_analysis(self, embeddings, species, keep_noise=False, random_state=2025, param_dist=None, n_iter_search=20):
         import umap
+        import hdbscan
+        from sklearn.metrics import make_scorer
+        from sklearn.model_selection import RandomizedSearchCV
 
         # Filter embeddings with the selected species
         self.repertoire = [d for d in embeddings if isinstance(d, dict) and d.get('prediction', '').lower() == species.lower()]
         embeddings = np.array([d['embeddings'] for d in self.repertoire if d.get('embeddings') is not None])
 
         # Apply UMAP dimensionality reduction
-        reducer = umap.UMAP(n_components=2, random_state=2025, metric=metric)
+        reducer = umap.UMAP(random_state=random_state)
         reduced_embeddings = reducer.fit_transform(embeddings)
+        # Fit HDBSCAN clustering algorithm
+        cluster = hdbscan.HDBSCAN(gen_min_span_tree=True).fit(reduced_embeddings)
 
-        # Find best clustering
-        best_score = -np.inf
-        best_labels = None
-        best_min_cluster_size = None
+        # Specify parameters and distributions to sample from
+        if param_dist is None:
+            param_dist = {
+                        'min_samples': [5,10,15,20,25],
+                        'min_cluster_size': [5,10,15,20,25],  
+                        'metric': ['euclidean', 'manhattan'] 
+                        }
 
-        for i in range(min_cluster_size, max_cluster_size + min_cluster_size, min_cluster_size):
-            cluster = hdbscan.HDBSCAN(min_cluster_size=i, metric=metric).fit(reduced_embeddings)
-            dbcv = validity_index(reduced_embeddings.astype('float64'), cluster.labels_, metric=metric)
+        # Apply random search to estimate repertoire size
+        validity_scorer = make_scorer(hdbscan.validity.validity_index, greater_is_better=True)
+        random_search = RandomizedSearchCV(cluster,
+                                           param_distributions=param_dist,
+                                           n_iter=n_iter_search,
+                                           scoring=validity_scorer,
+                                           random_state=random_state)
 
-            if dbcv > best_score:
-                best_score = dbcv
-                best_labels = cluster.labels_
-                best_min_cluster_size = i
+        random_search.fit(reduced_embeddings)
 
-        n_clusters = len(np.unique(best_labels[best_labels >= 0]))
+        # Get best clusterer and labels
+        best_clusterer = random_search.best_estimator_
+        best_labels = best_clusterer.labels_
 
         if self.verbose:
-            print(f'Number of clusters found (excluding noise): {n_clusters} (min_cluster_size={best_min_cluster_size}, dbcv={best_score})')
+            n_clusters = len(np.unique(best_labels[best_labels >= 0]))
+            print(f'Number of clusters found (excluding noise): {n_clusters} (best Parameters {random_search.best_params_})')
+            print(f"DBCV score :{random_search.best_estimator_.relative_validity_}")
 
         # Update tmin/tmax, embeddings, and prediction
         for i, d in enumerate(self.repertoire):
@@ -193,12 +203,10 @@ class RecordingROI(RecordingBuffer):
                 d['tmin'] = d['tmin_roi']
             if 'tmax_roi' in d:
                 d['tmax'] = d['tmax_roi']
-
             d['embeddings'] = reduced_embeddings[i]
-
             if i < len(best_labels):
                 label = best_labels[i]
-                d['prediction'] = f"Syllable {label}" if label != -1 else "Noise"
+                d['prediction'] = f"Cluster {label}" if label != -1 else "Noise"
 
         if keep_noise is not True:
             # Remove all entries labeled as "Noise"
@@ -222,23 +230,23 @@ class RecordingROI(RecordingBuffer):
 if __name__ == "__main__":
 
     ### Create RecordingROI instance
-    rec = RecordingROI(path="Turdus_iliacus", rate=48000, fmin=1, fmax=15000, multiprocessing=True)
+    rec = RecordingROI(path="out.wav", rate=48000, fmin=1, fmax=15000, multiprocessing=True)
 
     # Detect region of interests (ROIs) in the recording
     rois = rec.detect_rois(min_duration=0.5, max_duration=10.0, display=False)
     # Segment ROIs into 3-second audio chunks
-    segments = rec.segment_rois(rois, noise_reduction='-INF')
+    segments = rec.segment_rois(rois, noise_reduction=-20)
 
     # Extract embeddings and predict species with BirdNET
-    data = rec.birdnet_analysis(segments, extract=True, predict=True, min_confidence=0.25, save_path='turdus.npy')
+    data = rec.birdnet_analysis(segments, extract=True, predict=True, min_confidence=0.75)
 
     # import numpy as np
-    # data = np.load('turdus.npy', allow_pickle=True)
+    # data = np.load('chloris.npy', allow_pickle=True)
 
-    # Analyze frequency range of the species
-    results = rec.frequency_analysis(data, species='Turdus iliacus_Redwing') # Chloris chloris_European Greenfinch
-    # Analyze repertoire of the species
-    data = rec.repertoire_analysis(data, species='Turdus iliacus_Redwing', min_cluster_size=20, max_cluster_size=60) # Turdus iliacus_Redwing
+    # # Analyze frequency range of the species
+    # results = rec.frequency_analysis(data, species='Chloris chloris_European Greenfinch') # Chloris chloris_European Greenfinch, Turdus iliacus_Redwing
+    # # Analyze repertoire of the species
+    # data = rec.repertoire_analysis(data, species='Chloris chloris_European Greenfinch') 
     
     # Display rois in interactive plot
-    rec.display_rois(data, noise_reduction='-INF')
+    rec.display_rois(data, noise_reduction=-20)
