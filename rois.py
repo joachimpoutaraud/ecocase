@@ -175,8 +175,6 @@ def extract_roi_chunks(args):
         )[0]
 
         num_samples = len(ndarray)
-        duration = roi['tmax'] - roi['tmin']
-        seconds_per_sample = duration / num_samples
 
         chunks = []
         chunk_idx = 0
@@ -190,19 +188,13 @@ def extract_roi_chunks(args):
                 padded[:len(chunk)] = chunk
                 chunk = padded
 
-            # Calculate time boundaries for the chunk
-            tmin_chunk = roi['tmin'] + i * seconds_per_sample
-            tmax_chunk = tmin_chunk + chunk_duration
-
             chunks.append({
                 "path": roi['path'],
                 "roi": ndarray,
                 "chunk": chunk,
                 "idx": chunk_idx,
-                "tmin": tmin_chunk,
-                "tmax": tmax_chunk,
-                "tmin_roi": roi['tmin'],
-                "tmax_roi": roi['tmax'],
+                "tmin": roi['tmin'],
+                "tmax": roi['tmax'],
                 "fmin": roi['fmin'],
                 "fmax": roi['fmax']
             })

@@ -26,6 +26,6 @@ segments = rec.segment_rois(rois, noise_reduction=-20, download=False)
 data = rec.birdnet_analysis(segments, extract=True, predict=True, min_confidence=0.75)
 # Analyze frequency range for each detected species
 results = rec.frequency_analysis(data)
-# Display repertoire in interactive plot
+# Display ROIs in interactive plot
 rec.display_rois(data, noise_reduction=-50)
 ```

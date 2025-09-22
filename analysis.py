@@ -49,7 +49,7 @@ def analyze_segment(args):
 
     # Create result dict by unpacking seg and updating only necessary keys
     result = {
-        **{k: seg[k] for k in ["path", "roi", "chunk", "idx", "tmin", "tmax", "tmin_roi", "tmax_roi", "fmin", "fmax"]},
+        **{k: seg[k] for k in ["path", "roi", "chunk", "idx", "tmin", "tmax", "fmin", "fmax"]},
         "embeddings": embeddings if extract else None,
         "prediction": prediction,
         "confidence": confidence

@@ -80,7 +80,7 @@ class RecordingROI(RecordingBuffer):
         run_bokeh_server(embeddings, self.rate, self.audio_filter_chain, noise_reduction, frame_width, frame_height, point_size, port)
 
 
-    def birdnet_analysis(self, segments, extract=False, predict=True, min_confidence=0.75, save=True, save_path="birdnet_results.npy"):
+    def birdnet_analysis(self, segments, extract=False, predict=True, min_confidence=0.75, keep_best=True, save_path=None):
         """
         Analyze audio segments using BirdNET and optionally save results as a .npy file.
 
@@ -89,8 +89,8 @@ class RecordingROI(RecordingBuffer):
             extract (bool): Whether to extract audio before prediction.
             predict (bool): Whether to run BirdNET prediction.
             min_confidence (float): Minimum confidence threshold for predictions.
-            save (bool): If True, saves results to a .npy file.
-            save_path (str): Path to save the .npy results file.
+            keep_best (bool): Whether to keep only one embedding with the best confidence score for ROI longer than 3s.
+            save_path (str): Path to save the .npy results file. Default is None (no saving).
 
         Returns:
             list: Analysis results.
@@ -101,11 +101,36 @@ class RecordingROI(RecordingBuffer):
         # Analyze the segments
         results = self._multiprocessing(analyze_segment, args_list, desc="Analyzing segments with BirdNET")
 
-        # Store results
-        self.data = results
+        if predict and keep_best:
+            # Keep embedding with best confidence score for ROIs longer than 3s
+            dicts = [r for r in results if isinstance(r, dict)]
+            if not dicts:
+                self.data = []
+            else:
+                filtered = []
+                current_group = [dicts[0]]
+
+            for prev, curr in tqdm(zip(dicts, dicts[1:]),
+                                   total=max(len(dicts)-1, 0),
+                                   desc="Filtering embeddings (keeping best per ROI)",
+                                   disable=not self.verbose):
+                if curr.get('idx') == prev.get('idx') + 1:
+                    current_group.append(curr)
+                else:
+                    best = max(current_group, key=lambda x: x.get('confidence', 0))
+                    filtered.append(best)
+                    current_group = [curr]
+
+            # Add last group
+            best = max(current_group, key=lambda x: x.get('confidence', 0))
+            filtered.append(best)
+            self.data = filtered
+        else:
+            # Store results
+            self.data = results
 
         # Save to .npy file if requested
-        if save:
+        if save_path is not None:
             import numpy as np
             np.save(save_path, results)
 
@@ -230,7 +255,7 @@ class RecordingROI(RecordingBuffer):
 if __name__ == "__main__":
 
     ### Create RecordingROI instance
-    rec = RecordingROI(path="out.wav", rate=48000, fmin=1, fmax=15000, multiprocessing=True)
+    rec = RecordingROI(path="Chloris_chloris", rate=48000, fmin=1, fmax=15000, multiprocessing=True)
 
     # Detect region of interests (ROIs) in the recording
     rois = rec.detect_rois(min_duration=0.5, max_duration=10.0, display=False)
@@ -238,15 +263,15 @@ if __name__ == "__main__":
     segments = rec.segment_rois(rois, noise_reduction=-20)
 
     # Extract embeddings and predict species with BirdNET
-    data = rec.birdnet_analysis(segments, extract=True, predict=True, min_confidence=0.75)
+    data = rec.birdnet_analysis(segments, extract=True, predict=True, min_confidence=0.25, save_path="chloris.npy")
 
     # import numpy as np
     # data = np.load('chloris.npy', allow_pickle=True)
 
-    # # Analyze frequency range of the species
-    # results = rec.frequency_analysis(data, species='Chloris chloris_European Greenfinch') # Chloris chloris_European Greenfinch, Turdus iliacus_Redwing
-    # # Analyze repertoire of the species
-    # data = rec.repertoire_analysis(data, species='Chloris chloris_European Greenfinch') 
+    # Analyze frequency range of the species
+    results = rec.frequency_analysis(data, species='Chloris chloris_European Greenfinch') # Chloris chloris_European Greenfinch, Turdus iliacus_Redwing
+    # Analyze repertoire of the species
+    data = rec.repertoire_analysis(data, species='Chloris chloris_European Greenfinch') 
     
     # Display rois in interactive plot
     rec.display_rois(data, noise_reduction=-20)
