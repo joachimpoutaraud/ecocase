@@ -20,13 +20,14 @@ def suppress_output():
 
 def analyze_segment(args):
     # Get the arguments
-    seg, rate, extract, predict, min_confidence = args
+    seg, extract, predict, min_confidence = args
 
     with suppress_output():
         birdnet_analyzer = Analyzer()
 
     birdnet_sr = 48000  # BirdNET sampling rate
     chunk = seg["chunk"]
+    rate = seg['rate']
 
     if rate != birdnet_sr:
         chunk = librosa.resample(chunk, orig_sr=rate, target_sr=birdnet_sr)
@@ -49,7 +50,7 @@ def analyze_segment(args):
 
     # Create result dict by unpacking seg and updating only necessary keys
     result = {
-        **{k: seg[k] for k in ["path", "roi", "chunk", "idx", "tmin", "tmax", "fmin", "fmax"]},
+        **{k: seg[k] for k in ["path", "rate", "roi", "chunk", "idx", "tmin", "tmax", "fmin", "fmax", "audio_filter_chain"]},
         "embeddings": embeddings if extract else None,
         "prediction": prediction,
         "confidence": confidence

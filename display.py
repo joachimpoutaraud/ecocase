@@ -13,13 +13,13 @@ import warnings
 warnings.filterwarnings("ignore")
 
 
-def run_bokeh_server(embeddings, rate, audio_filter_chain=None, noise_reduction=-20, frame_width=1400, frame_height=600, point_size=5, port=8080, random_state=2025):
+def run_bokeh_server(data, audio_filter_chain=None, noise_reduction=-20, frame_width=1400, frame_height=600, point_size=5, port=8080, random_state=2025):
     # Prepare data
-    labels = np.array([item.get('prediction') for item in embeddings])
+    labels = np.array([item.get('prediction') for item in data])
 
     def modify_doc(doc):
         # Prepare embeddings
-        X = np.array([item['embeddings'] for item in embeddings])
+        X = np.array([item['embeddings'] for item in data])
         X = np.nan_to_num(X)
 
         if X.shape[1] > 2:
@@ -50,12 +50,13 @@ def run_bokeh_server(embeddings, rate, audio_filter_chain=None, noise_reduction=
         size_list = [point_size if lbl == 'Unknown' else point_size * 3 for lbl in labels_arr]
 
         source = ColumnDataSource(data=dict(
-            x=x, y=y, label=labels_arr, audio=[""] * len(embeddings), 
-            path=[emb['path'] for emb in embeddings],
-            tmin=[emb['tmin'] for emb in embeddings],
-            tmax=[emb['tmax'] for emb in embeddings],
-            fmin=[emb['fmin'] for emb in embeddings],
-            fmax=[emb['fmax'] for emb in embeddings],
+            x=x, y=y, label=labels_arr, audio=[""] * len(data), 
+            path=[emb['path'] for emb in data],
+            tmin=[emb['tmin'] for emb in data],
+            tmax=[emb['tmax'] for emb in data],
+            fmin=[emb['fmin'] for emb in data],
+            fmax=[emb['fmax'] for emb in data],
+            rate=[emb['rate'] for emb in data],
             color=color_list, size=size_list
         ))
 
@@ -105,6 +106,7 @@ def run_bokeh_server(embeddings, rate, audio_filter_chain=None, noise_reduction=
                 tmax = source.data['tmax'][idx]
                 fmin = source.data['fmin'][idx]
                 fmax = source.data['fmax'][idx]
+                rate = source.data['rate'][idx]
 
                 spectrogram_result = extract_roi_audio(path, tmin, tmax, fmin, fmax, audio_filter_chain, noise_reduction, encode='spectrogram', rate=rate)
                 audio_result = extract_roi_audio(path, tmin, tmax, fmin, fmax, audio_filter_chain, noise_reduction, encode='audio', rate=rate)
@@ -140,6 +142,7 @@ def run_bokeh_server(embeddings, rate, audio_filter_chain=None, noise_reduction=
                     tmax = source.data['tmax'][idx]
                     fmin = source.data['fmin'][idx]
                     fmax = source.data['fmax'][idx]
+                    rate = source.data['rate'][idx]
 
                     _, outpath = extract_roi_audio(path, tmin, tmax, fmin, fmax, audio_filter_chain, noise_reduction, download=True, rate=rate)
                     saved.append(outpath)

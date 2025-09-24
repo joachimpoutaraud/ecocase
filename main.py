@@ -23,6 +23,7 @@ class RecordingROI(RecordingBuffer):
 
         # Get the file or folder paths
         self.path = []
+
         if os.path.isdir(path):
             for file in os.listdir(path):
                 full_path = os.path.join(path, file)
@@ -63,29 +64,68 @@ class RecordingROI(RecordingBuffer):
         return self.rois
     
 
-    def segment_rois(self, rois, noise_reduction=-20, download=False):
+    def segment_rois(self, rois, noise_reduction=-20, download=False, save_path=None):
         # Set arguments list
         args_list = [(roi, self.rate, self.audio_filter_chain, noise_reduction, download) for roi in rois]
 
         # Segment the region of interests (ROIs)
         results = self._multiprocessing(extract_roi_chunks, args_list, desc="Segmenting region of interests (ROIs)")
         # Flatten the list of segments
-        self.segments = [segment for sublist in results if sublist is not None for segment in sublist]      
+        self.data = [segment for sublist in results if sublist is not None for segment in sublist]  
 
-        return self.segments  
+        # Save to .npy file if requested
+        if save_path is not None:
+            np.save(save_path, self.data)    
+
+        return self.data  
 
     
-    def display_rois(self, embeddings, noise_reduction=-50, frame_width=1400, frame_height=600, point_size=5, port=8080):
+    def display_rois(self, noise_reduction=-20, frame_width=1400, frame_height=600, point_size=5, port=8080):
         from display import run_bokeh_server
-        run_bokeh_server(embeddings, self.rate, self.audio_filter_chain, noise_reduction, frame_width, frame_height, point_size, port)
+        run_bokeh_server(self.data, self.audio_filter_chain, noise_reduction, frame_width, frame_height, point_size, port)
 
 
-    def birdnet_analysis(self, segments, extract=False, predict=True, min_confidence=0.75, keep_best=True, save_path=None):
+    def _multiprocessing(self, func, args_list, desc="Multiprocessing"):
+        if self.multiprocessing:
+            with Pool(processes=cpu_count()-1) as pool:
+                results = list(tqdm(pool.imap(func, args_list),
+                                    total=len(args_list),
+                                    desc=desc,
+                                    disable=not self.verbose))
+        else:
+            results = [func(args) for args in tqdm(args_list, desc=desc, disable=not self.verbose)]
+        return results
+    
+
+
+class RecordingAnalysis(RecordingROI):
+    def __init__(self, data, audio_filter_chain=None, multiprocessing=True, verbose=True):
+        
+        self.multiprocessing = multiprocessing
+        self.verbose = verbose
+
+        # Get the file data path
+        if os.path.isfile(data):
+            # Check if it's a valid .npy file
+            if data.lower().endswith((".npy")):
+                self.data = np.load(data, allow_pickle=True)
+            else:
+                raise ValueError(f"Invalid path: {data}")
+        else:
+            self.data = data
+
+        if audio_filter_chain is not None:
+            self.audio_filter_chain = audio_filter_chain
+        else:
+            self.audio_filter_chain = self.data[0].get('audio_filter_chain', None)
+
+
+    def birdnet_analysis(self, extract=False, predict=True, min_confidence=0.25, keep_best=True, save_path=None):
         """
         Analyze audio segments using BirdNET and optionally save results as a .npy file.
 
         Parameters:
-            segments (list): List of segment dictionaries.
+            data (list): List of segment dictionaries.
             extract (bool): Whether to extract audio before prediction.
             predict (bool): Whether to run BirdNET prediction.
             min_confidence (float): Minimum confidence threshold for predictions.
@@ -95,8 +135,9 @@ class RecordingROI(RecordingBuffer):
         Returns:
             list: Analysis results.
         """
+
         # Set arguments list
-        args_list = [(seg, self.rate, extract, predict, min_confidence) for seg in segments]
+        args_list = [(seg, extract, predict, min_confidence) for seg in self.data]
 
         # Analyze the segments
         results = self._multiprocessing(analyze_segment, args_list, desc="Analyzing segments with BirdNET")
@@ -110,10 +151,7 @@ class RecordingROI(RecordingBuffer):
                 filtered = []
                 current_group = [dicts[0]]
 
-            for prev, curr in tqdm(zip(dicts, dicts[1:]),
-                                   total=max(len(dicts)-1, 0),
-                                   desc="Filtering embeddings (keeping best per ROI)",
-                                   disable=not self.verbose):
+            for prev, curr in zip(dicts, dicts[1:]):
                 if curr.get('idx') == prev.get('idx') + 1:
                     current_group.append(curr)
                 else:
@@ -131,18 +169,17 @@ class RecordingROI(RecordingBuffer):
 
         # Save to .npy file if requested
         if save_path is not None:
-            import numpy as np
-            np.save(save_path, results)
+            np.save(save_path, self.data)
 
         return self.data
 
 
-    def frequency_analysis(self, predictions, species=None):
+    def frequency_analysis(self, species=None):
         # Get unique detected species with counts
         if species is None:
-            preds = np.array([item.get('prediction') for item in predictions])
+            preds = np.array([item.get('prediction') for item in self.data])
         else:
-            filtered_predictions = [d for d in predictions if isinstance(d, dict) and d.get('prediction', '').lower() == species.lower()]
+            filtered_predictions = [d for d in self.data if isinstance(d, dict) and d.get('prediction', '').lower() == species.lower()]
             preds = np.array([item.get('prediction') for item in filtered_predictions])
 
         unique_species, counts = np.unique(preds, return_counts=True)
@@ -156,7 +193,7 @@ class RecordingROI(RecordingBuffer):
 
         for i in np.argsort(-counts):
             species = unique_species[i]
-            filtered = [d for d in predictions if d['prediction'] == species]
+            filtered = [d for d in self.data if d['prediction'] == species]
             confidence = np.array([item.get('confidence') for item in filtered])
 
             fmin_values = [entry['fmin'] for entry in filtered]
@@ -179,15 +216,15 @@ class RecordingROI(RecordingBuffer):
         return results_dict
     
 
-    def repertoire_analysis(self, embeddings, species, keep_noise=False, random_state=2025, param_dist=None, n_iter_search=20):
+    def repertoire_analysis(self, species, keep_noise=False, random_state=2025, param_dist=None, n_iter_search=20):
         import umap
         import hdbscan
         from sklearn.metrics import make_scorer
         from sklearn.model_selection import RandomizedSearchCV
 
         # Filter embeddings with the selected species
-        self.repertoire = [d for d in embeddings if isinstance(d, dict) and d.get('prediction', '').lower() == species.lower()]
-        embeddings = np.array([d['embeddings'] for d in self.repertoire if d.get('embeddings') is not None])
+        self.data = [d for d in self.data if isinstance(d, dict) and d.get('prediction', '').lower() == species.lower()]
+        embeddings = np.array([d['embeddings'] for d in self.data if d.get('embeddings') is not None])
 
         # Apply UMAP dimensionality reduction
         reducer = umap.UMAP(random_state=random_state)
@@ -223,7 +260,7 @@ class RecordingROI(RecordingBuffer):
             print(f"DBCV score :{random_search.best_estimator_.relative_validity_}")
 
         # Update tmin/tmax, embeddings, and prediction
-        for i, d in enumerate(self.repertoire):
+        for i, d in enumerate(self.data):
             if 'tmin_roi' in d:
                 d['tmin'] = d['tmin_roi']
             if 'tmax_roi' in d:
@@ -235,43 +272,33 @@ class RecordingROI(RecordingBuffer):
 
         if keep_noise is not True:
             # Remove all entries labeled as "Noise"
-            self.repertoire = [d for d in self.repertoire if d.get('prediction') != "Noise"]
+            self.data = [d for d in self.data if d.get('prediction') != "Noise"]
 
-        return self.repertoire
+        return self.data
 
-
-    def _multiprocessing(self, func, args_list, desc="Multiprocessing"):
-        if self.multiprocessing:
-            with Pool(processes=cpu_count()-1) as pool:
-                results = list(tqdm(pool.imap(func, args_list),
-                                    total=len(args_list),
-                                    desc=desc,
-                                    disable=not self.verbose))
-        else:
-            results = [func(args) for args in tqdm(args_list, desc=desc, disable=not self.verbose)]
-        return results
         
 
 if __name__ == "__main__":
-
     ### Create RecordingROI instance
-    rec = RecordingROI(path="Chloris_chloris", rate=48000, fmin=1, fmax=15000, multiprocessing=True)
-
+    rec = RecordingROI(path='out.wav', rate=48000, fmin=1, fmax=15000, multiprocessing=True)
     # Detect region of interests (ROIs) in the recording
     rois = rec.detect_rois(min_duration=0.5, max_duration=10.0, display=False)
     # Segment ROIs into 3-second audio chunks
-    segments = rec.segment_rois(rois, noise_reduction=-20)
+    data = rec.segment_rois(rois, noise_reduction=-20, save_path='data.npy')
 
+
+    ### Create RecordingAnalysis instance
+    rec = RecordingAnalysis(data, multiprocessing=True)
     # Extract embeddings and predict species with BirdNET
-    data = rec.birdnet_analysis(segments, extract=True, predict=True, min_confidence=0.25, save_path="chloris.npy")
-
-    # import numpy as np
-    # data = np.load('chloris.npy', allow_pickle=True)
-
+    embeddings = rec.birdnet_analysis(extract=True, predict=True, min_confidence=0.25, save_path='embeddings.npy')
     # Analyze frequency range of the species
-    results = rec.frequency_analysis(data, species='Chloris chloris_European Greenfinch') # Chloris chloris_European Greenfinch, Turdus iliacus_Redwing
-    # Analyze repertoire of the species
-    data = rec.repertoire_analysis(data, species='Chloris chloris_European Greenfinch') 
+    results = rec.frequency_analysis() # Chloris chloris_European Greenfinch, Turdus iliacus_Redwing
+    # # Analyze repertoire of the species
+    # repertoire = rec.repertoire_analysis(species='Chloris chloris_European Greenfinch') 
     
     # Display rois in interactive plot
-    rec.display_rois(data, noise_reduction=-20)
+    rec.display_rois(noise_reduction=-20)
+
+
+
+    #TODO system to choose from the labels species list

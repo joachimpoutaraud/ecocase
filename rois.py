@@ -75,7 +75,6 @@ def extract_roi_audio(path, tmin, tmax, fmin, fmax, audio_filter_chain=None, noi
         b64 = base64.b64encode(buf.read()).decode('ascii')
         return f"data:audio/wav;base64,{b64}"
 
-
     if encode == 'spectrogram':
         f, t, Sxx = spectrogram(roi_audio_int16, fs=rate)
         Sxx_db = 10 * np.log10(np.abs(Sxx)**2 + 1e-10)
@@ -93,6 +92,19 @@ def extract_roi_audio(path, tmin, tmax, fmin, fmax, audio_filter_chain=None, noi
         return f'<img src="data:image/png;base64,{img_b64}" />'
 
     return [roi_audio]
+
+    # out = {
+    #         "path": path,
+    #         "rate": rate,
+    #         "ndarray": roi_audio,
+    #         "tmin": tmin,
+    #         "tmax": tmax,
+    #         "fmin": fmin,
+    #         "fmax": fmax,
+    #         "audio_filter_chain": audio_filter_chain
+    #         }
+
+    # return out
 
 
 def extract_roi_contours(args):
@@ -190,13 +202,15 @@ def extract_roi_chunks(args):
 
             chunks.append({
                 "path": roi['path'],
+                "rate": rate,
                 "roi": ndarray,
                 "chunk": chunk,
                 "idx": chunk_idx,
                 "tmin": roi['tmin'],
                 "tmax": roi['tmax'],
                 "fmin": roi['fmin'],
-                "fmax": roi['fmax']
+                "fmax": roi['fmax'],
+                "audio_filter_chain": audio_filter_chain,
             })
 
             chunk_idx += 1
