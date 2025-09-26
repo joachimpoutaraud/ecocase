@@ -1,6 +1,7 @@
 import os
 import sys
 import contextlib
+import numpy as np
 from operator import itemgetter
 
 import librosa
@@ -17,6 +18,48 @@ def suppress_output():
             yield
         finally:
             sys.stdout, sys.stderr = old_stdout, old_stderr
+
+def extract_roi_chunks(roi):
+    chunk_duration = 3.0  # seconds
+    total_samples = int(chunk_duration * roi['rate'])
+
+    try:
+        # Extract ROI audio
+        ndarray = roi['ndarray']
+        num_samples = len(ndarray)
+
+        chunks = []
+        chunk_idx = 0
+
+        for i in range(0, num_samples, total_samples):
+            chunk = ndarray[i:i + total_samples]
+
+            # Pad the last chunk if it's shorter than total_samples
+            if len(chunk) < total_samples:
+                padded = np.zeros(total_samples, dtype=ndarray.dtype)
+                padded[:len(chunk)] = chunk
+                chunk = padded
+
+            chunks.append({
+                "path": roi['path'],
+                "rate": roi['rate'],
+                "roi": ndarray,
+                "chunk": chunk,
+                "idx": chunk_idx,
+                "tmin": roi['tmin'],
+                "tmax": roi['tmax'],
+                "fmin": roi['fmin'],
+                "fmax": roi['fmax'],
+                "audio_filter_chain": roi['audio_filter_chain'],
+            })
+
+            chunk_idx += 1
+
+    except Exception as e:
+        print(f"Error processing ROI {roi['path']}: {e}")
+        chunks = []
+
+    return chunks
 
 def analyze_segment(args):
     # Get the arguments

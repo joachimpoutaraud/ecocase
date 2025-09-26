@@ -11,7 +11,7 @@ import cv2
 from utils import convert_audio_to_image, convert_pixel_to_frequency
 
 
-def extract_roi_audio(path, tmin, tmax, fmin, fmax, audio_filter_chain=None, noise_reduction=-20, download=False, output_folder="rois", encode=None, rate=48000):
+def extract_roi_audio(args):
     """
     Extracts and filters region of interests (ROIs) from a recording using FFmpeg.
 
@@ -32,6 +32,8 @@ def extract_roi_audio(path, tmin, tmax, fmin, fmax, audio_filter_chain=None, noi
         np.ndarray or str: Filtered audio data, base64 string, or output path.
     """
     
+    path, tmin, tmax, fmin, fmax, audio_filter_chain, noise_reduction, download, rate, encode = args
+
     full_filter_chain = f"firequalizer=gain='if(between(f,{int(fmin)},{int(fmax)}),0,{noise_reduction})'"
 
     if audio_filter_chain is not None:
@@ -50,6 +52,7 @@ def extract_roi_audio(path, tmin, tmax, fmin, fmax, audio_filter_chain=None, noi
 
     if download:
         filename = os.path.splitext(os.path.basename(path))[0]
+        output_folder = "rois"
         os.makedirs(output_folder, exist_ok=True)
         filename_roi = f"{filename}_t_{round(tmin,2)}_{round(tmax,2)}_f_{int(fmin)}_{int(fmax)}.wav"
         output_path = os.path.join(output_folder, filename_roi)
@@ -91,20 +94,20 @@ def extract_roi_audio(path, tmin, tmax, fmin, fmax, audio_filter_chain=None, noi
         img_b64 = base64.b64encode(buf_img.read()).decode('ascii')
         return f'<img src="data:image/png;base64,{img_b64}" />'
 
-    return [roi_audio]
+    # return [roi_audio]
 
-    # out = {
-    #         "path": path,
-    #         "rate": rate,
-    #         "ndarray": roi_audio,
-    #         "tmin": tmin,
-    #         "tmax": tmax,
-    #         "fmin": fmin,
-    #         "fmax": fmax,
-    #         "audio_filter_chain": audio_filter_chain
-    #         }
+    out = {
+            "path": path,
+            "rate": rate,
+            "ndarray": roi_audio,
+            "tmin": tmin,
+            "tmax": tmax,
+            "fmin": fmin,
+            "fmax": fmax,
+            "audio_filter_chain": audio_filter_chain
+            }
 
-    # return out
+    return out
 
 
 def extract_roi_contours(args):
@@ -170,53 +173,3 @@ def extract_roi_contours(args):
         return rois
     except:
         pass
-
-
-def extract_roi_chunks(args):
-    roi, rate, audio_filter_chain, noise_reduction, download = args
-
-    chunk_duration = 3.0  # seconds
-    total_samples = int(chunk_duration * rate)
-
-    try:
-        # Extract ROI audio
-        ndarray = extract_roi_audio(
-            roi['path'], roi['tmin'], roi['tmax'],
-            roi['fmin'], roi['fmax'],
-            audio_filter_chain, noise_reduction, download, rate=rate
-        )[0]
-
-        num_samples = len(ndarray)
-
-        chunks = []
-        chunk_idx = 0
-
-        for i in range(0, num_samples, total_samples):
-            chunk = ndarray[i:i + total_samples]
-
-            # Pad the last chunk if it's shorter than total_samples
-            if len(chunk) < total_samples:
-                padded = np.zeros(total_samples, dtype=ndarray.dtype)
-                padded[:len(chunk)] = chunk
-                chunk = padded
-
-            chunks.append({
-                "path": roi['path'],
-                "rate": rate,
-                "roi": ndarray,
-                "chunk": chunk,
-                "idx": chunk_idx,
-                "tmin": roi['tmin'],
-                "tmax": roi['tmax'],
-                "fmin": roi['fmin'],
-                "fmax": roi['fmax'],
-                "audio_filter_chain": audio_filter_chain,
-            })
-
-            chunk_idx += 1
-
-    except Exception as e:
-        print(f"Error processing ROI {roi['path']}: {e}")
-        chunks = []
-
-    return chunks

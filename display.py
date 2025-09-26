@@ -108,8 +108,8 @@ def run_bokeh_server(data, audio_filter_chain=None, noise_reduction=-20, frame_w
                 fmax = source.data['fmax'][idx]
                 rate = source.data['rate'][idx]
 
-                spectrogram_result = extract_roi_audio(path, tmin, tmax, fmin, fmax, audio_filter_chain, noise_reduction, encode='spectrogram', rate=rate)
-                audio_result = extract_roi_audio(path, tmin, tmax, fmin, fmax, audio_filter_chain, noise_reduction, encode='audio', rate=rate)
+                spectrogram_result = extract_roi_audio([path, tmin, tmax, fmin, fmax, audio_filter_chain, noise_reduction, False, rate, 'spectrogram'])
+                audio_result = extract_roi_audio([path, tmin, tmax, fmin, fmax, audio_filter_chain, noise_reduction, False, rate, 'audio'])
 
                 combined_html += f'''
                     <div style="display: flex; flex-direction: column; align-items: center; margin: 10px;">
@@ -144,7 +144,7 @@ def run_bokeh_server(data, audio_filter_chain=None, noise_reduction=-20, frame_w
                     fmax = source.data['fmax'][idx]
                     rate = source.data['rate'][idx]
 
-                    _, outpath = extract_roi_audio(path, tmin, tmax, fmin, fmax, audio_filter_chain, noise_reduction, download=True, rate=rate)
+                    _, outpath = extract_roi_audio([path, tmin, tmax, fmin, fmax, audio_filter_chain, noise_reduction, True, rate, False])
                     saved.append(outpath)
 
                 except Exception as e:

@@ -5,20 +5,21 @@ from multiprocessing import Pool, cpu_count
 
 from birdnetlib.main import RecordingBuffer
 
-from rois import extract_roi_contours, extract_roi_chunks
-from analysis import analyze_segment
+from rois import extract_roi_contours, extract_roi_audio
+from analysis import analyze_segment, extract_roi_chunks
 
 import warnings
 warnings.filterwarnings("ignore")
 
 
 class RecordingROI(RecordingBuffer):
-    def __init__(self, path, rate=48000, fmin=1, fmax=15000, audio_filter_chain=None, multiprocessing=True, verbose=True):
+    def __init__(self, path, rate=48000, fmin=1, fmax=15000, audio_filter_chain=None, multiprocessing=True, save_path=None, verbose=True):
         
         self.rate = rate
         self.fmin = fmin
         self.fmax = fmax
         self.multiprocessing = multiprocessing
+        self.save_path = save_path
         self.verbose = verbose
 
         # Get the file or folder paths
@@ -64,25 +65,18 @@ class RecordingROI(RecordingBuffer):
         return self.rois
     
 
-    def segment_rois(self, rois, noise_reduction=-20, download=False, save_path=None):
+    def segment_rois(self, rois, noise_reduction=-20, download=False, output_folder="rois"):
         # Set arguments list
-        args_list = [(roi, self.rate, self.audio_filter_chain, noise_reduction, download) for roi in rois]
+        args_list = [(roi['path'], roi['tmin'], roi['tmax'], roi['fmin'], roi['fmax'], self.audio_filter_chain, noise_reduction, download, self.rate, None) for roi in rois]
 
         # Segment the region of interests (ROIs)
-        results = self._multiprocessing(extract_roi_chunks, args_list, desc="Segmenting region of interests (ROIs)")
-        # Flatten the list of segments
-        self.data = [segment for sublist in results if sublist is not None for segment in sublist]  
+        self.data = self._multiprocessing(extract_roi_audio, args_list, desc="Segmenting region of interests (ROIs)")
 
         # Save to .npy file if requested
-        if save_path is not None:
-            np.save(save_path, self.data)    
+        if self.save_path is not None:
+            np.save(self.save_path, self.data)    
 
         return self.data  
-
-    
-    def display_rois(self, noise_reduction=-20, frame_width=1400, frame_height=600, point_size=5, port=8080):
-        from display import run_bokeh_server
-        run_bokeh_server(self.data, self.audio_filter_chain, noise_reduction, frame_width, frame_height, point_size, port)
 
 
     def _multiprocessing(self, func, args_list, desc="Multiprocessing"):
@@ -137,8 +131,13 @@ class RecordingAnalysis(RecordingROI):
         """
 
         # Set arguments list
-        args_list = [(seg, extract, predict, min_confidence) for seg in self.data]
-
+        args_list = [roi for roi in self.data]
+        # Segment the region of interests (ROIs)
+        results = self._multiprocessing(extract_roi_chunks, args_list, desc="Preparing segments for BirdNET analysis")
+        # Flatten the list of segments
+        segments = [segment for sublist in results if sublist is not None for segment in sublist]  
+        # Set arguments list
+        args_list = [(seg, extract, predict, min_confidence) for seg in segments]
         # Analyze the segments
         results = self._multiprocessing(analyze_segment, args_list, desc="Analyzing segments with BirdNET")
 
@@ -275,20 +274,25 @@ class RecordingAnalysis(RecordingROI):
             self.data = [d for d in self.data if d.get('prediction') != "Noise"]
 
         return self.data
+    
+    
+    def display_rois(self, noise_reduction=-20, frame_width=1400, frame_height=600, point_size=5, port=8080):
+        from display import run_bokeh_server
+        run_bokeh_server(self.data, self.audio_filter_chain, noise_reduction, frame_width, frame_height, point_size, port)
 
         
 
 if __name__ == "__main__":
-    ### Create RecordingROI instance
-    rec = RecordingROI(path='out.wav', rate=48000, fmin=1, fmax=15000, multiprocessing=True)
-    # Detect region of interests (ROIs) in the recording
-    rois = rec.detect_rois(min_duration=0.5, max_duration=10.0, display=False)
-    # Segment ROIs into 3-second audio chunks
-    data = rec.segment_rois(rois, noise_reduction=-20, save_path='data.npy')
+    # ### Create RecordingROI instance
+    # rec = RecordingROI(path='out.wav', rate=48000, fmin=1, fmax=15000, multiprocessing=True, save_path='rois.npy')
+    # # Detect region of interests (ROIs) in the recording
+    # rois = rec.detect_rois(min_duration=0.5, max_duration=10.0, display=False)
+    # # Segment ROIs into 3-second audio chunks
+    # data = rec.segment_rois(rois, noise_reduction=-20)
 
 
     ### Create RecordingAnalysis instance
-    rec = RecordingAnalysis(data, multiprocessing=True)
+    rec = RecordingAnalysis('data.npy', multiprocessing=True)
     # Extract embeddings and predict species with BirdNET
     embeddings = rec.birdnet_analysis(extract=True, predict=True, min_confidence=0.25, save_path='embeddings.npy')
     # Analyze frequency range of the species
@@ -301,4 +305,6 @@ if __name__ == "__main__":
 
 
 
-    #TODO system to choose from the labels species list
+    #TODO
+    # 1) move extract_roi_chunks to birdnet_analysis >>> UPDATE tmin and tmax with embneddings duration if keep_best is False
+    # 2) system to choose from the labels species list
