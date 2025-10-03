@@ -94,12 +94,10 @@ def extract_roi_audio(args):
         img_b64 = base64.b64encode(buf_img.read()).decode('ascii')
         return f'<img src="data:image/png;base64,{img_b64}" />'
 
-    # return [roi_audio]
-
     out = {
             "path": path,
             "rate": rate,
-            "ndarray": roi_audio,
+            "roi": roi_audio,
             "tmin": tmin,
             "tmax": tmax,
             "fmin": fmin,

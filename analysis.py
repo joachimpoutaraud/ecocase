@@ -19,26 +19,33 @@ def suppress_output():
         finally:
             sys.stdout, sys.stderr = old_stdout, old_stderr
 
-def extract_roi_chunks(roi):
-    chunk_duration = 3.0  # seconds
+
+def prepare_segments(roi, chunk_duration=3.0):
+    # Calculate number of samples per chunk
     total_samples = int(chunk_duration * roi['rate'])
 
     try:
         # Extract ROI audio
-        ndarray = roi['ndarray']
+        ndarray = roi['roi']
         num_samples = len(ndarray)
+        base_tmin = roi.get('tmin', 0.0)
 
         chunks = []
         chunk_idx = 0
 
         for i in range(0, num_samples, total_samples):
             chunk = ndarray[i:i + total_samples]
+            actual_samples = len(chunk)
 
             # Pad the last chunk if it's shorter than total_samples
-            if len(chunk) < total_samples:
+            if actual_samples < total_samples:
                 padded = np.zeros(total_samples, dtype=ndarray.dtype)
-                padded[:len(chunk)] = chunk
+                padded[:actual_samples] = chunk
                 chunk = padded
+
+            # Calculate chunk-specific tmin/tmax
+            chunk_tmin = base_tmin + (chunk_idx * chunk_duration)
+            chunk_tmax = chunk_tmin + chunk_duration
 
             chunks.append({
                 "path": roi['path'],
@@ -46,22 +53,25 @@ def extract_roi_chunks(roi):
                 "roi": ndarray,
                 "chunk": chunk,
                 "idx": chunk_idx,
-                "tmin": roi['tmin'],
-                "tmax": roi['tmax'],
-                "fmin": roi['fmin'],
-                "fmax": roi['fmax'],
-                "audio_filter_chain": roi['audio_filter_chain'],
+                "tmin": roi.get('tmin'),
+                "tmax": roi.get('tmax'),
+                "tmin_chunk": chunk_tmin,
+                "tmax_chunk": chunk_tmax,
+                "fmin": roi.get('fmin'),
+                "fmax": roi.get('fmax'),
+                "audio_filter_chain": roi.get('audio_filter_chain'),
             })
 
             chunk_idx += 1
 
     except Exception as e:
-        print(f"Error processing ROI {roi['path']}: {e}")
+        print(f"Error processing ROI {roi.get('path')}: {e}")
         chunks = []
 
     return chunks
 
-def analyze_segment(args):
+
+def analyze_segments(args):
     # Get the arguments
     seg, extract, predict, min_confidence = args
 
@@ -93,7 +103,7 @@ def analyze_segment(args):
 
     # Create result dict by unpacking seg and updating only necessary keys
     result = {
-        **{k: seg[k] for k in ["path", "rate", "roi", "chunk", "idx", "tmin", "tmax", "fmin", "fmax", "audio_filter_chain"]},
+        **{k: seg[k] for k in ["path", "rate", "roi", "chunk", "idx", "tmin", "tmax", "tmin_chunk", "tmax_chunk", "fmin", "fmax", "audio_filter_chain"]},
         "embeddings": embeddings if extract else None,
         "prediction": prediction,
         "confidence": confidence
