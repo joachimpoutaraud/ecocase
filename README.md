@@ -15,21 +15,19 @@ You can install `ffmpeg` on your computer by following these [instructions](http
 from main import RecordingROI, RecordingAnalysis
 
 ### Create RecordingROI instance
-rec = RecordingROI(path='audio.wav', rate=48000, fmin=1, fmax=15000, multiprocessing=True)
+rec = RecordingROI(path='audio.wav', multiprocessing=True, save_path='rois.npy')
 # Detect region of interests (ROIs) in the recording
 rois = rec.detect_rois(min_duration=0.5, max_duration=10.0, display=False)
-# Segment ROIs into 3-second audio chunks
-data = rec.segment_rois(rois, noise_reduction=-20, save_path='data.npy')
+# Segment region of interests (ROIs) in the recording
+data = rec.segment_rois(rois, noise_reduction=-20)
 
 
 ### Create RecordingAnalysis instance
-rec = RecordingAnalysis(data, multiprocessing=True)
+rec = RecordingAnalysis(data=data, multiprocessing=True, save_path='analysis.npy')
 # Extract embeddings and predict species with BirdNET
-embeddings = rec.birdnet_analysis(extract=True, predict=True, min_confidence=0.25, save_path='embeddings.npy')
-# Analyze frequency range of the species
-results = rec.frequency_analysis() # Chloris chloris_European Greenfinch, Turdus iliacus_Redwing
-# # Analyze repertoire of the species
-# repertoire = rec.repertoire_analysis(species='Chloris chloris_European Greenfinch') 
+embeddings = rec.birdnet_analysis(extract=True, predict=True, min_confidence=0.75)
+# Analyze frequency range of the predicted species
+results = rec.frequency_analysis()
 
 # Display rois in interactive plot
 rec.display_rois(noise_reduction=-20)
