@@ -7,6 +7,7 @@ from birdnetlib.main import RecordingBuffer
 
 from rois import extract_roi_contours, extract_roi_audio
 from analysis import prepare_segments, analyze_segments
+from display import run_bokeh_server
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -114,6 +115,9 @@ class RecordingAnalysis(RecordingROI):
             self.audio_filter_chain = audio_filter_chain
         else:
             self.audio_filter_chain = self.data[0].get('audio_filter_chain', None)
+        
+        # Set random seed for reproducibility    
+        np.random.seed(self.random_state)
 
 
     def birdnet_analysis(self, extract=False, predict=True, min_confidence=0.25, keep_best=True):
@@ -237,9 +241,13 @@ class RecordingAnalysis(RecordingROI):
         self.data = [d for d in self.data if isinstance(d, dict) and d.get('prediction', '').lower() == species.lower()]
         embeddings = np.array([d['embeddings'] for d in self.data if d.get('embeddings') is not None])
 
-        # Apply UMAP dimensionality reduction
-        reducer = umap.UMAP(random_state=self.random_state)
-        reduced_embeddings = reducer.fit_transform(embeddings)
+        if embeddings.shape[1] > 2:
+            # Apply UMAP dimensionality reduction
+            reducer = umap.UMAP(random_state=self.random_state)
+            reduced_embeddings = reducer.fit_transform(embeddings)
+        else:
+            reduced_embeddings = embeddings
+            
         # Fit HDBSCAN clustering algorithm
         cluster = hdbscan.HDBSCAN(gen_min_span_tree=True).fit(reduced_embeddings)
 
@@ -258,7 +266,7 @@ class RecordingAnalysis(RecordingROI):
                                            n_iter=n_iter_search,
                                            scoring=validity_scorer,
                                            random_state=self.random_state)
-
+        # Fit random search algorithm
         random_search.fit(reduced_embeddings)
 
         # Get best clusterer and labels
@@ -270,17 +278,17 @@ class RecordingAnalysis(RecordingROI):
             print(f'Number of clusters found (excluding noise): {n_clusters} (best Parameters {random_search.best_params_})')
             print(f"DBCV score :{random_search.best_estimator_.relative_validity_}")
 
-        # Update embeddings and prediction
+        # Update embeddings and add 'repertoire' key with label values
         for i, d in enumerate(self.data):
             d['embeddings'] = reduced_embeddings[i]
             if i < len(best_labels):
                 label = best_labels[i]
-                d['prediction'] = f"Cluster {label}" if label != -1 else "Noise"
+                d['repertoire'] = f"Cluster {label}" if label != -1 else "Noise"
 
         if keep_noise is not True:
             # Remove all entries labeled as "Noise"
-            self.data = [d for d in self.data if d.get('prediction') != "Noise"]
-
+            self.data = [d for d in self.data if d.get('repertoire') != "Noise"]
+            
         # Save to .npy file if requested
         if self.save_path is not None:
             np.save(self.save_path, self.data)
@@ -289,17 +297,17 @@ class RecordingAnalysis(RecordingROI):
     
     
     def display_rois(self, noise_reduction=-20, frame_width=1400, frame_height=600, point_size=5, port=8080):
-        from display import run_bokeh_server
+        # Display rois in interactive plot with Bokeh server
         run_bokeh_server(self.data, self.audio_filter_chain, noise_reduction, frame_width, frame_height, point_size, port, self.random_state)
 
         
 
 if __name__ == "__main__":
     ### Create RecordingROI instance
-    rec = RecordingROI(path='Turdus_iliacus', multiprocessing=True, save_path='rois.npy')
+    rec = RecordingROI(path='Chloris_chloris', multiprocessing=True, save_path='rois.npy')
     # Detect region of interests (ROIs) in the recording
     rois = rec.detect_rois(min_duration=0.5, max_duration=10.0, display=False)
-    # Segment ROIs into 3-second audio chunks
+    # Segment region of interests (ROIs) in the recording
     data = rec.segment_rois(rois, noise_reduction=-20)
 
 
@@ -307,10 +315,10 @@ if __name__ == "__main__":
     rec = RecordingAnalysis(data=data, multiprocessing=True, save_path='analysis.npy')
     # Extract embeddings and predict species with BirdNET
     embeddings = rec.birdnet_analysis(extract=True, predict=True, min_confidence=0.25)
-    # Analyze frequency range of the species
-    results = rec.frequency_analysis(species=None) 
-    # # Analyze repertoire of the species
-    # repertoire = rec.repertoire_analysis(species='Turdus iliacus_Redwing') # Chloris chloris_European Greenfinch, Turdus iliacus_Redwing
+    # Analyze frequency range of the predicted species
+    results = rec.frequency_analysis(species='Chloris chloris_European Greenfinch') 
+    # Analyze repertoire of the species
+    repertoire = rec.repertoire_analysis(species='Chloris chloris_European Greenfinch') # Chloris chloris_European Greenfinch, Turdus iliacus_Redwing
     
     # Display rois in interactive plot
     rec.display_rois(noise_reduction=-20)

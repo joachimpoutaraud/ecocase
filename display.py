@@ -14,8 +14,11 @@ warnings.filterwarnings("ignore")
 
 
 def run_bokeh_server(data, audio_filter_chain=None, noise_reduction=-20, frame_width=1400, frame_height=600, point_size=5, port=8080, random_state=2025):
-    # Prepare data
-    labels = np.array([item.get('prediction') for item in data])
+    # Prepare labels
+    if 'repertoire' in data[0]:
+        labels = np.array([item.get('repertoire') for item in data])
+    else:
+        labels = np.array([item.get('prediction') for item in data])
 
     def modify_doc(doc):
         # Prepare embeddings
