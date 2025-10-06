@@ -1,10 +1,7 @@
 import os, subprocess
-import io, base64
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from scipy.io import wavfile
-from scipy.signal import spectrogram
 
 import cv2
 
@@ -32,7 +29,7 @@ def extract_roi_audio(args):
         np.ndarray or str: Filtered audio data, base64 string, or output path.
     """
     
-    path, tmin, tmax, fmin, fmax, audio_filter_chain, noise_reduction, download, rate, encode = args
+    path, tmin, tmax, fmin, fmax, audio_filter_chain, noise_reduction, download, rate = args
 
     full_filter_chain = f"firequalizer=gain='if(between(f,{int(fmin)},{int(fmax)}),0,{noise_reduction})'"
 
@@ -66,33 +63,9 @@ def extract_roi_audio(args):
             print("FFmpeg error:", error.decode())
 
     roi_audio = np.frombuffer(audio_bytes, dtype=np.float32)
-    roi_audio_int16 = (roi_audio * 32767).astype(np.int16)
 
     if download:
         return roi_audio, output_path
-
-    if encode == 'audio':
-        buf = io.BytesIO()
-        wavfile.write(buf, rate, roi_audio_int16)
-        buf.seek(0)
-        b64 = base64.b64encode(buf.read()).decode('ascii')
-        return f"data:audio/wav;base64,{b64}"
-
-    if encode == 'spectrogram':
-        f, t, Sxx = spectrogram(roi_audio_int16, fs=rate)
-        Sxx_db = 10 * np.log10(np.abs(Sxx)**2 + 1e-10)
-
-        plt.figure(figsize=(4, 2))
-        plt.pcolormesh(t, f, Sxx_db, shading='auto', cmap='gray')
-        plt.ylabel('Frequency [Hz]')
-        plt.xlabel('Time [sec]')
-        plt.title(f'{path}')
-        buf_img = io.BytesIO()
-        plt.savefig(buf_img, format='png', bbox_inches='tight', pad_inches=0)
-        plt.close()
-        buf_img.seek(0)
-        img_b64 = base64.b64encode(buf_img.read()).decode('ascii')
-        return f'<img src="data:image/png;base64,{img_b64}" />'
 
     out = {
             "path": path,

@@ -1,4 +1,8 @@
+import io, base64
 import numpy as np
+import matplotlib.pyplot as plt
+from scipy.io import wavfile
+from scipy.signal import spectrogram
 import webbrowser
 
 from bokeh.plotting import figure
@@ -111,8 +115,36 @@ def run_bokeh_server(data, audio_filter_chain=None, noise_reduction=-20, frame_w
                 fmax = source.data['fmax'][idx]
                 rate = source.data['rate'][idx]
 
-                spectrogram_result = extract_roi_audio([path, tmin, tmax, fmin, fmax, audio_filter_chain, noise_reduction, False, rate, 'spectrogram'])
-                audio_result = extract_roi_audio([path, tmin, tmax, fmin, fmax, audio_filter_chain, noise_reduction, False, rate, 'audio'])
+                # Find the original item in 'data' that matches this ROI and grab its "roi" key
+                for item in data:
+                    if (item.get('path') == path and
+                        float(item.get('tmin')) == float(tmin) and
+                        float(item.get('tmax')) == float(tmax) and
+                        float(item.get('fmin')) == float(fmin) and
+                        float(item.get('fmax')) == float(fmax)):
+                        ndarray = item['roi']
+
+                roi_audio_int16 = (ndarray * 32767).astype(np.int16)
+                buf = io.BytesIO()
+                wavfile.write(buf, rate, roi_audio_int16)
+                buf.seek(0)
+                b64 = base64.b64encode(buf.read()).decode('ascii')
+                audio_result = f"data:audio/wav;base64,{b64}"
+
+                f, t, Sxx = spectrogram(roi_audio_int16, fs=rate)
+                Sxx_db = 10 * np.log10(np.abs(Sxx)**2 + 1e-10)
+
+                plt.figure(figsize=(4, 2))
+                plt.pcolormesh(t, f, Sxx_db, shading='auto', cmap='gray')
+                plt.ylabel('Frequency [Hz]')
+                plt.xlabel('Time [sec]')
+                plt.title(f'{path}')
+                buf_img = io.BytesIO()
+                plt.savefig(buf_img, format='png', bbox_inches='tight', pad_inches=0)
+                plt.close()
+                buf_img.seek(0)
+                img_b64 = base64.b64encode(buf_img.read()).decode('ascii')
+                spectrogram_result = f'<img src="data:image/png;base64,{img_b64}" />'
 
                 combined_html += f'''
                     <div style="display: flex; flex-direction: column; align-items: center; margin: 10px;">
@@ -147,7 +179,7 @@ def run_bokeh_server(data, audio_filter_chain=None, noise_reduction=-20, frame_w
                     fmax = source.data['fmax'][idx]
                     rate = source.data['rate'][idx]
 
-                    _, outpath = extract_roi_audio([path, tmin, tmax, fmin, fmax, audio_filter_chain, noise_reduction, True, rate, False])
+                    _, outpath = extract_roi_audio([path, tmin, tmax, fmin, fmax, audio_filter_chain, noise_reduction, True, rate])
                     saved.append(outpath)
 
                 except Exception as e:
@@ -235,3 +267,14 @@ def run_bokeh_server(data, audio_filter_chain=None, noise_reduction=-20, frame_w
         pass
 
     server.io_loop.start()
+
+
+# if __name__ == "__main__":
+#     from main import RecordingAnalysis
+
+#     ### Create RecordingAnalysis instance
+#     rec = RecordingAnalysis(data='examples/turdus_iliacus_repertoire.npy', multiprocessing=True)
+#     # Analyze frequency range of the predicted species
+#     results = rec.frequency_analysis(species='Turdus iliacus_Redwing') 
+#     # Display rois in interactive plot
+#     rec.display_rois(noise_reduction=-20)

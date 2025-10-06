@@ -67,7 +67,7 @@ class RecordingROI(RecordingBuffer):
 
     def segment_rois(self, rois, noise_reduction=-20, download=False, output_folder="rois"):
         # Set arguments list
-        args_list = [(roi['path'], roi['tmin'], roi['tmax'], roi['fmin'], roi['fmax'], self.audio_filter_chain, noise_reduction, download, self.rate, None) for roi in rois]
+        args_list = [(roi['path'], roi['tmin'], roi['tmax'], roi['fmin'], roi['fmax'], self.audio_filter_chain, noise_reduction, download, self.rate) for roi in rois]
 
         # Segment the region of interests (ROIs)
         self.data = self._multiprocessing(extract_roi_audio, args_list, desc="Segmenting region of interests (ROIs)")
@@ -304,7 +304,7 @@ class RecordingAnalysis(RecordingROI):
 
 if __name__ == "__main__":
     ### Create RecordingROI instance
-    rec = RecordingROI(path='Chloris_chloris', multiprocessing=True, save_path='rois.npy')
+    rec = RecordingROI(path='Turdus_iliacus', multiprocessing=True, save_path='rois.npy')
     # Detect region of interests (ROIs) in the recording
     rois = rec.detect_rois(min_duration=0.5, max_duration=10.0, display=False)
     # Segment region of interests (ROIs) in the recording
@@ -312,13 +312,13 @@ if __name__ == "__main__":
 
 
     ### Create RecordingAnalysis instance
-    rec = RecordingAnalysis(data=data, multiprocessing=True, save_path='analysis.npy')
+    rec = RecordingAnalysis(data=data, multiprocessing=True)
     # Extract embeddings and predict species with BirdNET
     embeddings = rec.birdnet_analysis(extract=True, predict=True, min_confidence=0.25)
     # Analyze frequency range of the predicted species
-    results = rec.frequency_analysis(species='Chloris chloris_European Greenfinch') 
+    results = rec.frequency_analysis(species='Turdus iliacus_Redwing') 
     # Analyze repertoire of the species
-    repertoire = rec.repertoire_analysis(species='Chloris chloris_European Greenfinch') # Chloris chloris_European Greenfinch, Turdus iliacus_Redwing
+    repertoire = rec.repertoire_analysis(species='Turdus iliacus_Redwing') # Chloris chloris_European Greenfinch, Turdus iliacus_Redwing
     
     # Display rois in interactive plot
     rec.display_rois(noise_reduction=-20)
