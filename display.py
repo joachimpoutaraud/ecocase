@@ -1,8 +1,7 @@
+import subprocess
 import io, base64
 import numpy as np
-import matplotlib.pyplot as plt
 from scipy.io import wavfile
-from scipy.signal import spectrogram
 import webbrowser
 
 from bokeh.plotting import figure
@@ -31,6 +30,7 @@ def run_bokeh_server(data, audio_filter_chain=None, noise_reduction=-20, frame_w
 
         if X.shape[1] > 2:
             import umap
+
             reducer = umap.UMAP(random_state=random_state)
             labels_arr = np.asarray(labels).astype(str)
             mask = labels_arr != 'Unknown'
@@ -122,28 +122,25 @@ def run_bokeh_server(data, audio_filter_chain=None, noise_reduction=-20, frame_w
                         float(item.get('tmax')) == float(tmax) and
                         float(item.get('fmin')) == float(fmin) and
                         float(item.get('fmax')) == float(fmax)):
-                        ndarray = item['roi']
+                        roi_audio = item['roi']
 
-                roi_audio_int16 = (ndarray * 32767).astype(np.int16)
+                # Write WAV bytes for both audio playback and for piping into ffmpeg
                 buf = io.BytesIO()
-                wavfile.write(buf, rate, roi_audio_int16)
+                wavfile.write(buf, rate, roi_audio)
                 buf.seek(0)
-                b64 = base64.b64encode(buf.read()).decode('ascii')
+                wav_bytes = buf.read()
+                b64 = base64.b64encode(wav_bytes).decode('ascii')
                 audio_result = f"data:audio/wav;base64,{b64}"
 
-                f, t, Sxx = spectrogram(roi_audio_int16, fs=rate)
-                Sxx_db = 10 * np.log10(np.abs(Sxx)**2 + 1e-10)
-
-                plt.figure(figsize=(4, 2))
-                plt.pcolormesh(t, f, Sxx_db, shading='auto', cmap='gray')
-                plt.ylabel('Frequency [Hz]')
-                plt.xlabel('Time [sec]')
-                plt.title(f'{path}')
-                buf_img = io.BytesIO()
-                plt.savefig(buf_img, format='png', bbox_inches='tight', pad_inches=0)
-                plt.close()
-                buf_img.seek(0)
-                img_b64 = base64.b64encode(buf_img.read()).decode('ascii')
+                # Use ffmpeg to produce a spectrogram image by piping the WAV bytes to stdin
+                cmd = [
+                    "ffmpeg",
+                    "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
+                    "-lavfi", "showspectrumpic=s=300x200:legend=enabled:color=channel",
+                    "-frames:v", "1", "-f", "image2", "pipe:1",
+                ]
+                proc = subprocess.run(cmd, input=wav_bytes, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+                img_b64 = base64.b64encode(proc.stdout).decode("ascii")
                 spectrogram_result = f'<img src="data:image/png;base64,{img_b64}" />'
 
                 combined_html += f'''
@@ -273,8 +270,8 @@ def run_bokeh_server(data, audio_filter_chain=None, noise_reduction=-20, frame_w
 #     from main import RecordingAnalysis
 
 #     ### Create RecordingAnalysis instance
-#     rec = RecordingAnalysis(data='examples/turdus_iliacus_repertoire.npy', multiprocessing=True)
+#     rec = RecordingAnalysis(data='examples/chloris_chloris_repertoire.npy', multiprocessing=True)
 #     # Analyze frequency range of the predicted species
-#     results = rec.frequency_analysis(species='Turdus iliacus_Redwing') 
+#     results = rec.frequency_analysis(species='Chloris chloris_European Greenfinch') 
 #     # Display rois in interactive plot
 #     rec.display_rois(noise_reduction=-20)
