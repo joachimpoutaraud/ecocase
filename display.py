@@ -143,10 +143,14 @@ def run_bokeh_server(data, audio_filter_chain=None, noise_reduction=-20, frame_w
                 img_b64 = base64.b64encode(proc.stdout).decode("ascii")
                 spectrogram_result = f'<img src="data:image/png;base64,{img_b64}" />'
 
+                # Show the file path (and an optional clickable file:// link)
+                path_html = f'<div style="font-size:12px; color:#444; margin-top:6px;">File path: {path}</a></div>'
+
                 combined_html += f'''
                     <div style="display: flex; flex-direction: column; align-items: center; margin: 10px;">
-                    {spectrogram_result}
-                    <audio controls src="{audio_result}"></audio>
+                        {spectrogram_result}
+                        <audio controls src="{audio_result}"></audio>
+                        {path_html}
                     </div>
                 '''
 
