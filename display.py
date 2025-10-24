@@ -30,11 +30,11 @@ def run_bokeh_server(data, audio_filter_chain=None, noise_reduction=-20, frame_w
 
         if X.shape[1] > 2:
             import umap
-
             reducer = umap.UMAP(random_state=random_state)
             labels_arr = np.asarray(labels).astype(str)
             mask = labels_arr != 'Unknown'
             y = np.full(labels_arr.shape, -1, dtype=int)
+
             if mask.any():
                 masked_labels = labels_arr[mask]
                 unique_labels, y_masked = np.unique(masked_labels, return_inverse=True)
@@ -71,7 +71,7 @@ def run_bokeh_server(data, audio_filter_chain=None, noise_reduction=-20, frame_w
         p = figure(
             frame_width=frame_width,
             frame_height=frame_height,
-            title="Interactive scatter plot",
+            title=f"Ecological Clustering with Analysis of Sound Events (ECOCASE): {len(unique_labels)} clusters",
             tools="pan,wheel_zoom,reset,tap,box_select,lasso_select",
             active_scroll='wheel_zoom',
             active_drag='box_select'

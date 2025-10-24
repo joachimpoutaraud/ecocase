@@ -1,4 +1,4 @@
-name: birdnetroi
+name: ecocase
 dependencies:
   - python=3.9
   - pip
