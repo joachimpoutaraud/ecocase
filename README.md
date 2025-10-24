@@ -6,7 +6,7 @@
 conda env create -f environment.yml
 ```
 
-Note: EcoCASE requires `FFmpeg` to read and process audio files. Install `FFmpeg` and make sure it is available on your `PATH`.
+```pythonEcoCASE``` requires `FFmpeg` to read and process audio files. Install `FFmpeg` and make sure it is available on your `PATH`.
 
 Verify the installation with:
 
