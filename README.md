@@ -31,7 +31,7 @@ contours = case.detect_rois(min_duration=0.5, max_duration=10.0, display=False)
 rois = case.segment_rois(contours, noise_reduction=-40)
 
 # Extract embeddings and predict species with BirdNET
-embeddings = case.birdnet_analysis(rois, embeddings=True, predict=True, min_conf=0.90)
+data = case.birdnet_analysis(rois, embeddings=True, predict=True, min_conf=0.90)
 # Analyze frequency range of the predicted species
 results = case.frequency_analysis()
 
