@@ -15,35 +15,115 @@ from rois import extract_roi_audio
 import warnings
 warnings.filterwarnings("ignore")
 
-
-def run_bokeh_server(data, audio_filter_chain=None, noise_reduction=-20, frame_width=1400, frame_height=600, point_size=5, port=8080, random_state=2025):
+def reducer(data, random_state):
     # Prepare labels
     if 'repertoire' in data[0]:
         labels = np.array([item.get('repertoire') for item in data])
     else:
         labels = np.array([item.get('prediction') for item in data])
+    
+    # Prepare embeddings
+    X = np.array([item['embeddings'] for item in data])
+    X = np.nan_to_num(X)
+
+    if X.shape[1] > 2:
+        labels_arr = np.asarray(labels).astype(str)
+        unique_labels = np.unique(labels_arr).astype(str).tolist()      
+        pred = labels_arr != 'Unknown'
+        
+        # UMAP dimensionality reduction
+        import umap
+        reducer = umap.UMAP(random_state=random_state, metric='cosine')
+        
+        # # ParametricUMAP dimensionality reduction
+        # from umap.parametric_umap import ParametricUMAP
+        # from tensorflow import keras
+        
+        # n_components = 2
+        # dims = (X.shape[1],)
+
+        # # Build the autoencoder        
+        # encoder = keras.Sequential([
+        #     keras.layers.Input(shape=dims),
+        #     keras.layers.Flatten(),
+        #     keras.layers.Dense(units=256, activation="relu"),
+        #     keras.layers.BatchNormalization(),
+        #     keras.layers.Dropout(0.3),
+        #     keras.layers.Dense(units=128, activation="relu"),
+        #     keras.layers.BatchNormalization(),
+        #     keras.layers.Dropout(0.3),
+        #     keras.layers.Dense(units=32, activation="relu"),
+        #     keras.layers.BatchNormalization(),
+        #     keras.layers.Dropout(0.3),
+        #     keras.layers.Dense(units=n_components, name="z")
+        # ])
+        
+        # decoder = keras.Sequential([
+        #         keras.layers.Input(shape=(n_components,)),
+        #         keras.layers.BatchNormalization(),
+        #         keras.layers.Dropout(0.3),
+        #         keras.layers.Dense(units=32, activation="relu"),
+        #         keras.layers.BatchNormalization(),
+        #         keras.layers.Dropout(0.3),
+        #         keras.layers.Dense(units=128, activation="relu"),
+        #         keras.layers.BatchNormalization(),
+        #         keras.layers.Dropout(0.3),
+        #         keras.layers.Dense(units=256, activation="relu"),
+        #         keras.layers.BatchNormalization(),
+        #         keras.layers.Dropout(0.3),
+        #         keras.layers.Dense(units=np.prod(dims), name="recon", activation=None),
+        #         keras.layers.Reshape(dims),
+        # ])
+
+        # keras_fit_kwargs = {"callbacks": [
+        #     keras.callbacks.EarlyStopping(
+        #         monitor='loss',
+        #         min_delta=10**-2,
+        #         patience=10,
+        #         verbose=1,
+        #     )
+        # ]}
+        
+        # reducer = ParametricUMAP(
+        #                         encoder=encoder, 
+        #                         decoder=decoder,
+        #                         parametric_reconstruction=True,
+        #                         dims=dims, 
+        #                         keras_fit_kwargs=keras_fit_kwargs,
+        #                         random_state=random_state
+        #                         )
+        
+        # reducer.n_training_epochs = 1            
+
+        y = np.full(labels_arr.shape, -1, dtype=int)
+
+        if pred.any():
+            pred_labels = labels_arr[pred]
+            _, y_pred = np.unique(pred_labels, return_inverse=True)
+            y[pred] = y_pred
+            
+        X = reducer.fit_transform(X, y=y)
+
+        # if pred.any():
+        #     # Fit only on predicted samples (i.e. not 'Unknown')
+        #     X_pred = X[pred]
+        #     pred_labels = labels_arr[pred]
+        #     _, y_pred = np.unique(pred_labels, return_inverse=True)
+        #     reducer.fit(X_pred, y=y_pred)
+        #     # Transform all samples with the autoencoder
+        #     X = reducer.transform(X)
+        # else:
+        #     # If nothing is predicted, fall back to fitting on all data
+        #     X = reducer.fit_transform(X)
+        
+    return X, labels_arr, unique_labels
+
+def run_bokeh_server(data, audio_filter_chain=None, noise_reduction=-20, frame_width=1400, frame_height=600, point_size=5, port=8080, random_state=2025):
+        
+    # Supervised dimensionality reduction with UMAP
+    X, labels_arr, unique_labels = reducer(data, random_state)
 
     def modify_doc(doc):
-        # Prepare embeddings
-        X = np.array([item['embeddings'] for item in data])
-        X = np.nan_to_num(X)
-
-        if X.shape[1] > 2:
-            import umap
-            reducer = umap.UMAP(random_state=random_state)
-            labels_arr = np.asarray(labels).astype(str)
-            mask = labels_arr != 'Unknown'
-            y = np.full(labels_arr.shape, -1, dtype=int)
-
-            if mask.any():
-                masked_labels = labels_arr[mask]
-                unique_labels, y_masked = np.unique(masked_labels, return_inverse=True)
-                y[mask] = y_masked
-            X = reducer.fit_transform(X, y=y)
-
-        labels_arr = np.array(labels).astype(str)
-        unique_labels = np.unique(labels_arr).astype(str).tolist()
-
         x, y = X[:, 0], X[:, 1]
         label_to_idx = {lbl: i for i, lbl in enumerate(unique_labels)}
 
@@ -271,11 +351,15 @@ def run_bokeh_server(data, audio_filter_chain=None, noise_reduction=-20, frame_w
 
 
 # if __name__ == "__main__":
-#     from main import RecordingAnalysis
-
-#     ### Create RecordingAnalysis instance
-#     rec = RecordingAnalysis(data='examples/chloris_chloris_repertoire.npy', multiprocessing=True)
-#     # Analyze frequency range of the predicted species
-#     results = rec.frequency_analysis(species='Chloris chloris_European Greenfinch') 
-#     # Display rois in interactive plot
-#     rec.display_rois(noise_reduction=-20)
+    
+#     data = np.load('embeddings.npy', allow_pickle=True)
+#     audio_filter_chain = ",".join([
+#             # Resample audio file
+#             f"aresample=resampler=soxr:out_sample_rate=48000",
+#             # Convert to mono
+#             f"aformat=channel_layouts=mono",
+#             # Normalize dynamics
+#             f"dynaudnorm=b=enabled",
+#         ])
+    
+#     run_bokeh_server(data, audio_filter_chain, frame_width=1400, frame_height=600, point_size=5, port=8080, random_state=2025)

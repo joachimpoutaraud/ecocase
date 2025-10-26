@@ -14,11 +14,14 @@ warnings.filterwarnings("ignore")
 
 
 class EcoCASE(RecordingBuffer):
-    def __init__(self, path, rate=48000, fmin=1, fmax=15000, audio_filter_chain=None, multiprocessing=True, verbose=True, random_state=2025):
+    def __init__(self, path, rate=48000, fmin=1, fmax=15000, lat=None, lon=None, week_48=-1, audio_filter_chain=None, multiprocessing=True, verbose=True, random_state=2025):
         
         self.rate = rate
         self.fmin = fmin
         self.fmax = fmax
+        self.lat = lat
+        self.lon = lon
+        self.week_48 = week_48
         self.multiprocessing = multiprocessing
         self.verbose = verbose
         self.random_state = random_state
@@ -28,6 +31,10 @@ class EcoCASE(RecordingBuffer):
 
         # Load path(s) or .npy data
         self._load_path(path)
+        
+        if self.lon is not None and self.lat is not None:
+            # Get species list based on location
+            self.species_list = self._species_list(self.lon, self.lat, self.week_48)
         
         # Get the audio filter chain
         self.audio_filter_chain = audio_filter_chain or ",".join([
@@ -41,7 +48,7 @@ class EcoCASE(RecordingBuffer):
     
 
     def detect_rois(self, min_duration=0.5, max_duration=10.0, fscale="mel", noise_profile=[0.0, 0.5],
-                    n_fft=512, hop_length=128, fps=50, stretch_factor=1.0, display=True):
+                    n_fft=512, hop_length=128, fps=50, stretch_factor=1.0, display=False):
         """
         Detect region of interests (ROIs) from audio files.
         
@@ -53,10 +60,10 @@ class EcoCASE(RecordingBuffer):
             n_fft (int): Number of FFT components for spectrogram.
             hop_length (int): Hop length for STFT.
             fps (int): Frames per second for spectrogram.
-            stretch_factor (float): Time stretch factor for contour detection.
-            display (bool): Whether to display detected ROIs in a plot.
+            stretch_factor (float): Time stretch factor for contour detection of syllables.
+            display (bool): Whether to display detected ROIs in a plot. Defqault is False.
             
-            Returns:
+        Returns:
             rois (list): List of detected ROIs dictionaries.
         """
         
@@ -73,7 +80,7 @@ class EcoCASE(RecordingBuffer):
         return rois
     
 
-    def segment_rois(self, rois, noise_reduction=-20, download=False, binary_file_path=None):
+    def segment_rois(self, rois, noise_reduction=-20, download=False, save_binary=None):
         """
         Segment region of interests (ROIs) from audio files and optionally save results as a .npy file.
         
@@ -81,9 +88,9 @@ class EcoCASE(RecordingBuffer):
             rois (list): List of ROIs dictionaries.
             noise_reduction (int): Noise reduction level in dB.
             download (bool): Whether to save the segmented ROIs as audio files.
-            binary_file_path (str): Path to save the .npy results file. Default is None (no saving).
+            save_binary (str): Path to save the .npy results file. Default is None (no saving).
             
-            Returns:
+        Returns:
             rois (list): List of segmented ROIs data.
         """
 
@@ -94,13 +101,13 @@ class EcoCASE(RecordingBuffer):
         self.rois = self._multiprocessing(extract_roi_audio, args_list, desc="Segmenting region of interests (ROIs)")
 
         # Save rois to a binary file in NumPy .npy format
-        if binary_file_path is not None:
-            np.save(binary_file_path, self.rois)    
+        if save_binary is not None:
+            np.save(save_binary, self.rois)    
 
         return self.rois  
 
 
-    def birdnet_analysis(self, rois, embeddings=False, predict=True, min_confidence=0.25, keep_best=True, binary_file_path=None):
+    def birdnet_analysis(self, rois, embeddings=False, predict=True, min_conf=0.25, keep_best=True, save_binary=None):
         """
         Analyze region of interests (ROIs) using BirdNET and optionally save results as a .npy file.
 
@@ -108,15 +115,15 @@ class EcoCASE(RecordingBuffer):
             rois (list): List of ROIs dictionaries.
             embeddings (bool): Whether to extract BirdNET embeddings or not.
             predict (bool): Whether to run BirdNET prediction or not.
-            min_confidence (float): Minimum confidence threshold for predictions.
+            min_conf (float): Minimum confidence threshold for predictions.
             keep_best (bool): Whether to keep only one embedding with the best confidence score for ROI longer than 3s.
-            binary_file_path (str): Path to save the .npy results file. Default is None (no saving).
+            save_binary (str): Path to save the .npy results file. Default is None (no saving).
 
         Returns:
             data (list): Analysis results.
         """
 
-        # Check if rois is a file path
+        # Check if rois is a binary file path
         if isinstance(rois, str):
             rois = np.load(rois, allow_pickle=True)
 
@@ -127,7 +134,7 @@ class EcoCASE(RecordingBuffer):
         # Flatten the list of segments
         segments = [segment for sublist in results if sublist is not None for segment in sublist]  
         # Set arguments list
-        args_list = [(seg, embeddings, predict, min_confidence) for seg in segments]
+        args_list = [(seg, embeddings, predict, min_conf, self.species_list) for seg in segments]
         # Analyze the segments
         results = self._multiprocessing(analyze_segments, args_list, desc="Analyzing segments with BirdNET")
 
@@ -173,8 +180,8 @@ class EcoCASE(RecordingBuffer):
             self.data = results
 
         # Save data to a binary file in NumPy .npy format
-        if binary_file_path is not None:
-            np.save(binary_file_path, self.data)
+        if save_binary is not None:
+            np.save(save_binary, self.data)
 
         return self.data
 
@@ -223,7 +230,7 @@ class EcoCASE(RecordingBuffer):
         return results_dict
     
 
-    def repertoire_analysis(self, species, keep_noise=False, param_dist=None, n_iter_search=20, binary_file_path=None):
+    def repertoire_analysis(self, species, keep_noise=False, param_dist=None, n_iter_search=20, save_binary=None):
         import umap
         import hdbscan
         from sklearn.metrics import make_scorer
@@ -282,8 +289,8 @@ class EcoCASE(RecordingBuffer):
             self.data = [d for d in self.data if d.get('repertoire') != "Noise"]
             
         # Save data to a binary file in NumPy .npy format
-        if binary_file_path is not None:
-            np.save(binary_file_path, self.data)
+        if save_binary is not None:
+            np.save(save_binary, self.data)
 
         return self.data
     
@@ -291,30 +298,6 @@ class EcoCASE(RecordingBuffer):
     def display_clusters(self, noise_reduction=-20, frame_width=1400, frame_height=600, point_size=5, port=8080):
         # Display clusters in an interactive plot with Bokeh server
         run_bokeh_server(self.data, self.audio_filter_chain, noise_reduction, frame_width, frame_height, point_size, port, self.random_state)
-
-
-    def _multiprocessing(self, func, args_list, desc="Multiprocessing"):
-        """
-        Helper function to run multiprocessing with optional progress bar.
-        
-        Parameters:
-            func (function): Function to apply to each set of arguments.
-            args_list (list): List of argument tuples for the function.
-            desc (str): Description for the progress bar.
-            
-        Returns:
-            results (list): List of results from applying the function.
-        """
-
-        if self.multiprocessing:
-            with Pool(processes=cpu_count()-1) as pool:
-                results = list(tqdm(pool.imap(func, args_list),
-                                    total=len(args_list),
-                                    desc=desc,
-                                    disable=not self.verbose))
-        else:
-            results = [func(args) for args in tqdm(args_list, desc=desc, disable=not self.verbose)]
-        return results
 
 
     def _load_path(self, path, min_size=10*1024, audio_ext=(".wav", ".mp3", ".flac", ".aiff", ".ogg")):
@@ -355,9 +338,9 @@ class EcoCASE(RecordingBuffer):
 
         elif os.path.isfile(path):
             low = path.lower()
+            
             if low.endswith(".npy"):
                 self.data = np.load(path, allow_pickle=True)
-                
                 return self.data
             
             elif low.endswith(audio_ext):
@@ -371,60 +354,67 @@ class EcoCASE(RecordingBuffer):
             raise ValueError(f"Invalid path: {path}")
 
         return self.path
+    
+    
+    def _species_list(self, lon, lat, week_48):
+        """
+        Retrieve species list based on geographic location and week.
 
-
-    # def syllable_analysis(self, min_duration=0.1, max_duration=3.0, fscale="mel", noise_profile=[0.0, 0.5],
-    #                 n_fft=512, hop_length=128, fps=50, stretch_factor=10.0, display=True):
+        Parameters:
+            lon (float): Longitude.
+            lat (float): Latitude.
+            week_48 (bool): Whether to use week 48 species list for northern hemisphere.
+        Returns:
+            list: List of species names.    
+        """
+        from birdnetlib.species import SpeciesList
+        self.species_class = SpeciesList()
+        return self.species_class.return_list_for_analyzer(lat=lat, lon=lon, week_48=week_48, threshold=0.03)
+            
+    
+    def _multiprocessing(self, func, args_list, desc="Multiprocessing"):
+        """
+        Helper function to run multiprocessing with optional progress bar.
         
-    #     # Set arguments list using path/fmin/fmax from self.data dicts
-    #     args_list = [
-    #         (
-    #         d.get('path'),
-    #         1,
-    #         15000,
-    #         self.audio_filter_chain,
-    #         noise_profile,
-    #         n_fft, hop_length, fps, min_duration, max_duration, fscale, stretch_factor, display
-    #         )
-    #         for d in list(self.data) if isinstance(d, dict) and d.get('path') is not None
-    #     ]
-        
-    #     # Detect the region of interests (ROIs)
-    #     results = self._multiprocessing(extract_roi_contours, args_list, desc="Detecting syllables of interests (SOIs)")
-    #     # Flatten the list of rois
-    #     self.syllables = [syl for sublist in results if sublist is not None for syl in sublist]
+        Parameters:
+            func (function): Function to apply to each set of arguments.
+            args_list (list): List of argument tuples for the function.
+            desc (str): Description for the progress bar.
+            
+        Returns:
+            results (list): List of results from applying the function.
+        """
 
-    #     return self.syllables
-
+        if self.multiprocessing:
+            with Pool(processes=cpu_count()-1) as pool:
+                results = list(tqdm(pool.imap(func, args_list),
+                                    total=len(args_list),
+                                    desc=desc,
+                                    disable=not self.verbose))
+        else:
+            results = [func(args) for args in tqdm(args_list, desc=desc, disable=not self.verbose)]
+        return results
         
 
 if __name__ == "__main__":
     # Initialize EcoCASE with a file path or folder path containing audio files
-    case = EcoCASE(path='data', multiprocessing=True, rate=48000, fmin=1, fmax=15000)
+    case = EcoCASE(path='data/out.wav', multiprocessing=True, rate=48000, fmin=1, fmax=15000) #, lat=4.937, lon=-52.326)
 
     # Detect region of interests (ROIs) in the recording
-    contours = case.detect_rois(min_duration=0.5, max_duration=10.0, stretch_factor=10.0, display=False)
+    contours = case.detect_rois(min_duration=0.5, max_duration=10.0, stretch_factor=1.0, display=False)
     # Segment region of interests (ROIs) in the recording
-    rois = case.segment_rois(contours, noise_reduction=-20, binary_file_path='rois.npy')
+    rois = case.segment_rois(contours, noise_reduction=-40, save_binary='rois.npy')
     # Extract embeddings and predict species with BirdNET
-    embeddings = case.birdnet_analysis(rois, embeddings=True, predict=True, min_confidence=0.80, binary_file_path='embeddings.npy')
+    embeddings = case.birdnet_analysis(rois, embeddings=True, predict=True, min_conf=0.90, save_binary='embeddings.npy')    
 
     # # Analyze frequency range of the predicted species
     # results = case.frequency_analysis(species='Chloris chloris_European Greenfinch') 
     # # Analyze repertoire of the species
-    # repertoire = case.repertoire_analysis(species='Chloris chloris_European Greenfinch', binary_file_path='chloris_chloris_repertoire.npy') # Chloris chloris_European Greenfinch, Turdus iliacus_Redwing, Alauda arvensis_Eurasian Skylark
-
-    # print(results)
-
-    # case = EcoCASE(data='examples/chloris_chloris_repertoire.npy', multiprocessing=True)
-    # results = case.frequency_analysis(species='Chloris chloris_European Greenfingch')
-    # case = EcoCASE(path='examples/turdus_iliacus_repertoire.npy', multiprocessing=True)
-    # results = case.frequency_analysis(species='Turdus iliacus_Redwing')
-    # print(results)
-
+    # repertoire = case.repertoire_analysis(species='Chloris chloris_European Greenfinch', save_binary='repertoire.npy') # Chloris chloris_European Greenfinch, Turdus iliacus_Redwing, Alauda arvensis_Eurasian Skylark
+    
     # Display ecological clusters in an interactive plot
-    case.display_clusters(noise_reduction=-20)
+    case.display_clusters(port=8080)
 
     #TODO
-    # 1) Add lon and lat to birdnet anaylzer
+    # 1) add min_conf to display_clusters, freq and repertoire?
     # 2) system to choose from the labels species list

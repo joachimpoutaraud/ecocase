@@ -73,10 +73,7 @@ def prepare_segments(roi, chunk_duration=3.0):
 
 def analyze_segments(args):
     # Get the arguments
-    seg, extract, predict, min_confidence = args
-
-    with suppress_output():
-        birdnet_analyzer = Analyzer()
+    seg, extract, predict, min_confidence, species_list = args
 
     birdnet_sr = 48000  # BirdNET sampling rate
     chunk = seg["chunk"]
@@ -89,10 +86,13 @@ def analyze_segments(args):
     prediction = "Unknown"
     confidence = 0.0
 
+    with suppress_output():
+        birdnet_analyzer = Analyzer(custom_species_list=species_list)
+
     if extract:
         embeddings = birdnet_analyzer._return_embeddings([chunk])[0].tolist()
 
-    if predict:
+    if predict:            
         predictions = birdnet_analyzer.predict(chunk)[0]
         label_scores = dict(zip(birdnet_analyzer.labels, predictions))
         sorted_labels = sorted(label_scores.items(), key=itemgetter(1), reverse=True)
