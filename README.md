@@ -28,7 +28,7 @@ case = EcoCASE(path='<path_to_your_file>', multiprocessing=True, rate=48000, fmi
 # Detect region of interests (ROIs) in the recording
 contours = case.detect_rois(min_duration=0.5, max_duration=10.0, display=False)
 # Segment region of interests (ROIs) in the recording
-rois = case.segment_rois(contours, noise_reduction=-60)
+rois = case.segment_rois(contours, t_margin=0.2, f_margin=500, noise_reduction=-60)
 
 # Extract embeddings and predict species with BirdNET
 data = case.birdnet_analysis(rois, embeddings=True, predict=True)
