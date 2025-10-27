@@ -73,7 +73,7 @@ def prepare_segments(roi, chunk_duration=3.0):
 
 def analyze_segments(args):
     # Get the arguments
-    seg, extract, predict, min_confidence, species_list = args
+    seg, extract, predict, species_list = args
 
     birdnet_sr = 48000  # BirdNET sampling rate
     chunk = seg["chunk"]
@@ -83,23 +83,27 @@ def analyze_segments(args):
         chunk = librosa.resample(chunk, orig_sr=rate, target_sr=birdnet_sr)
 
     embeddings = None
-    prediction = "Unknown"
-    confidence = 0.0
+    prediction, confidence = "Unknown", 0.0
 
     with suppress_output():
-        birdnet_analyzer = Analyzer(custom_species_list=species_list)
+        birdnet_analyzer = Analyzer()
 
     if extract:
         embeddings = birdnet_analyzer._return_embeddings([chunk])[0].tolist()
 
-    if predict:            
-        predictions = birdnet_analyzer.predict(chunk)[0]
-        label_scores = dict(zip(birdnet_analyzer.labels, predictions))
-        sorted_labels = sorted(label_scores.items(), key=itemgetter(1), reverse=True)
-        filtered = [item for item in sorted_labels if item[1] >= min_confidence]
+    if predict:
+        preds = birdnet_analyzer.predict(chunk)[0]
+        if len(preds) == 0:
+            prediction, confidence = "Unknown", 0.0
+        else:
+            top_idx = int(np.argmax(preds))
+            top_label = birdnet_analyzer.labels[top_idx]
+            top_conf = float(preds[top_idx])
 
-        if filtered:
-            prediction, confidence = filtered[0]
+            if species_list and top_label not in species_list:
+                prediction, confidence = "Unknown", 0.0
+            else:
+                prediction, confidence = top_label, top_conf
 
     # Create result dict by unpacking seg and updating only necessary keys
     result = {

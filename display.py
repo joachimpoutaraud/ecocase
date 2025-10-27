@@ -15,7 +15,16 @@ from rois import extract_roi_audio
 import warnings
 warnings.filterwarnings("ignore")
 
-def reducer(data, random_state):
+def reducer(data, min_confidence, random_state):
+    
+    # Filter out low-confidence predictions by marking them as "Unknown"
+    if min_confidence is not None:
+        for item in data:
+            conf = item.get('confidence')
+            if conf < float(min_confidence):
+                item['prediction'] = 'Unknown'
+                item['confidence'] = 0.0
+    
     # Prepare labels
     if 'repertoire' in data[0]:
         labels = np.array([item.get('repertoire') for item in data])
@@ -118,10 +127,10 @@ def reducer(data, random_state):
         
     return X, labels_arr, unique_labels
 
-def run_bokeh_server(data, audio_filter_chain=None, noise_reduction=-20, frame_width=1400, frame_height=600, point_size=5, port=8080, random_state=2025):
+def run_bokeh_server(data, audio_filter_chain=None, min_confidence=0.90, noise_reduction=-20, frame_width=1400, frame_height=600, point_size=5, port=8080, random_state=2025):
         
     # Supervised dimensionality reduction with UMAP
-    X, labels_arr, unique_labels = reducer(data, random_state)
+    X, labels_arr, unique_labels = reducer(data, min_confidence=min_confidence, random_state=random_state)
 
     def modify_doc(doc):
         x, y = X[:, 0], X[:, 1]
@@ -362,4 +371,4 @@ def run_bokeh_server(data, audio_filter_chain=None, noise_reduction=-20, frame_w
 #             f"dynaudnorm=b=enabled",
 #         ])
     
-#     run_bokeh_server(data, audio_filter_chain, frame_width=1400, frame_height=600, point_size=5, port=8080, random_state=2025)
+#     run_bokeh_server(data, audio_filter_chain, min_confidence=0.75, frame_width=1400, frame_height=600, point_size=5, port=8080, random_state=2025)

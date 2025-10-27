@@ -35,6 +35,8 @@ class EcoCASE(RecordingBuffer):
         if self.lon is not None and self.lat is not None:
             # Get species list based on location
             self.species_list = self._species_list(self.lon, self.lat, self.week_48)
+        else:
+            self.species_list = []
         
         # Get the audio filter chain
         self.audio_filter_chain = audio_filter_chain or ",".join([
@@ -80,12 +82,14 @@ class EcoCASE(RecordingBuffer):
         return rois
     
 
-    def segment_rois(self, rois, noise_reduction=-20, download=False, save_binary=None):
+    def segment_rois(self, rois, t_margin=0.2, f_margin=500, noise_reduction=-20, download=False, save_binary=None):
         """
         Segment region of interests (ROIs) from audio files and optionally save results as a .npy file.
         
         Parameters:
             rois (list): List of ROIs dictionaries.
+            t_margin (float): Time margin in seconds to add before and after each ROI.
+            f_margin (int): Frequency margin in Hz to add below and above each ROI.
             noise_reduction (int): Noise reduction level in dB.
             download (bool): Whether to save the segmented ROIs as audio files.
             save_binary (str): Path to save the .npy results file. Default is None (no saving).
@@ -95,7 +99,7 @@ class EcoCASE(RecordingBuffer):
         """
 
         # Set arguments list
-        args_list = [(roi['path'], roi['tmin'], roi['tmax'], roi['fmin'], roi['fmax'], self.audio_filter_chain, noise_reduction, download, self.rate) for roi in rois]
+        args_list = [(roi['path'], roi['tmin']-t_margin, roi['tmax']+t_margin, roi['fmin']-f_margin, roi['fmax']+f_margin, self.audio_filter_chain, noise_reduction, download, self.rate) for roi in rois]
 
         # Segment the region of interests (ROIs)
         self.rois = self._multiprocessing(extract_roi_audio, args_list, desc="Segmenting region of interests (ROIs)")
@@ -107,7 +111,7 @@ class EcoCASE(RecordingBuffer):
         return self.rois  
 
 
-    def birdnet_analysis(self, rois, embeddings=False, predict=True, min_conf=0.25, keep_best=True, save_binary=None):
+    def birdnet_analysis(self, rois, embeddings=False, predict=True, keep_best=True, save_binary=None):
         """
         Analyze region of interests (ROIs) using BirdNET and optionally save results as a .npy file.
 
@@ -115,7 +119,6 @@ class EcoCASE(RecordingBuffer):
             rois (list): List of ROIs dictionaries.
             embeddings (bool): Whether to extract BirdNET embeddings or not.
             predict (bool): Whether to run BirdNET prediction or not.
-            min_conf (float): Minimum confidence threshold for predictions.
             keep_best (bool): Whether to keep only one embedding with the best confidence score for ROI longer than 3s.
             save_binary (str): Path to save the .npy results file. Default is None (no saving).
 
@@ -134,7 +137,7 @@ class EcoCASE(RecordingBuffer):
         # Flatten the list of segments
         segments = [segment for sublist in results if sublist is not None for segment in sublist]  
         # Set arguments list
-        args_list = [(seg, embeddings, predict, min_conf, self.species_list) for seg in segments]
+        args_list = [(seg, embeddings, predict, self.species_list) for seg in segments]
         # Analyze the segments
         results = self._multiprocessing(analyze_segments, args_list, desc="Analyzing segments with BirdNET")
 
@@ -295,9 +298,9 @@ class EcoCASE(RecordingBuffer):
         return self.data
     
     
-    def display_clusters(self, noise_reduction=-20, frame_width=1400, frame_height=600, point_size=5, port=8080):
+    def display_clusters(self, min_confidence=0.90, noise_reduction=-20, frame_width=1400, frame_height=600, point_size=5, port=8080):
         # Display clusters in an interactive plot with Bokeh server
-        run_bokeh_server(self.data, self.audio_filter_chain, noise_reduction, frame_width, frame_height, point_size, port, self.random_state)
+        run_bokeh_server(self.data, self.audio_filter_chain, min_confidence, noise_reduction, frame_width, frame_height, point_size, port, self.random_state)
 
 
     def _load_path(self, path, min_size=10*1024, audio_ext=(".wav", ".mp3", ".flac", ".aiff", ".ogg")):
@@ -398,14 +401,14 @@ class EcoCASE(RecordingBuffer):
 
 if __name__ == "__main__":
     # Initialize EcoCASE with a file path or folder path containing audio files
-    case = EcoCASE(path='data/out.wav', multiprocessing=True, rate=48000, fmin=1, fmax=15000) #, lat=4.937, lon=-52.326)
+    case = EcoCASE(path='data/SMA04635_20220318_182700.wav', multiprocessing=True, rate=48000, fmin=1, fmax=15000, lat=4.937, lon=-52.326)
 
     # Detect region of interests (ROIs) in the recording
     contours = case.detect_rois(min_duration=0.5, max_duration=10.0, stretch_factor=1.0, display=False)
     # Segment region of interests (ROIs) in the recording
-    rois = case.segment_rois(contours, noise_reduction=-40, save_binary='rois.npy')
+    rois = case.segment_rois(contours, noise_reduction=-60, save_binary='rois.npy')
     # Extract embeddings and predict species with BirdNET
-    embeddings = case.birdnet_analysis(rois, embeddings=True, predict=True, min_conf=0.90, save_binary='embeddings.npy')    
+    embeddings = case.birdnet_analysis(rois, embeddings=True, predict=True, save_binary='embeddings.npy')    
 
     # # Analyze frequency range of the predicted species
     # results = case.frequency_analysis(species='Chloris chloris_European Greenfinch') 
@@ -413,8 +416,7 @@ if __name__ == "__main__":
     # repertoire = case.repertoire_analysis(species='Chloris chloris_European Greenfinch', save_binary='repertoire.npy') # Chloris chloris_European Greenfinch, Turdus iliacus_Redwing, Alauda arvensis_Eurasian Skylark
     
     # Display ecological clusters in an interactive plot
-    case.display_clusters(port=8080)
+    case.display_clusters(min_confidence=0.90, port=8080)
 
     #TODO
-    # 1) add min_conf to display_clusters, freq and repertoire?
-    # 2) system to choose from the labels species list
+    # 1) system to choose from the labels species list
