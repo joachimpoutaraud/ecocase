@@ -18,15 +18,16 @@ def get_duration(path):
 
 
 def convert_audio_to_image(path, fmin=1, fmax=15000, audio_filter_chain=None, noise_profile=[0.0, 0.5], n_fft=512, hop_length=128, fps=50):
-    
-    audio_filter_chain = audio_filter_chain or ",".join(["dynaudnorm=b=enabled"])
 
     duration = get_duration(path)
     noise_start, noise_end = noise_profile[0], noise_profile[1]
     noise_profile_duration = noise_end - noise_start
 
     filter_complex = (
-        f"[0:a]{audio_filter_chain}[af];"
+        (f"[0:a]{audio_filter_chain},dynaudnorm=b=enabled[af];"
+         if audio_filter_chain
+         else "[0:a]dynaudnorm=b=enabled[af];"
+        ) +
         
         # Split audio file in two
         f"[af]asplit=2[a1][a2];"

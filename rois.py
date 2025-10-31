@@ -19,23 +19,26 @@ def extract_roi_audio(args):
         fmin (float): Minimum frequency of the ROI in Hz.
         fmax (float): Maximum frequency of the ROI in Hz.
         audio_filter_chain (str): FFmpeg-compatible audio filter chain string.
-        noise_reduction (int): Gain reduction outside the frequency band.
         download (bool): If True, saves filtered audio to disk and returns output path.
-        output_folder (str): Folder to save the output audio file.
-        encode (str): If 'audio', returns base64-encoded audio. If 'spectrogram', returns base64 image.
         rate (int): Sample rate for encoding and spectrogram.
 
     Returns:
-        np.ndarray or str: Filtered audio data, base64 string, or output path.
+        If download is True:
+            tuple: (roi_audio (np.ndarray), output_path (str))
+        Else:
+            dict: {"path", "rate", "roi", "tmin", "tmax", "fmin", "fmax", "audio_filter_chain"}
     """
     
-    path, tmin, tmax, fmin, fmax, audio_filter_chain, noise_reduction, download, rate = args
+    path, tmin, tmax, fmin, fmax, audio_filter_chain, download, rate = args
 
-    full_filter_chain = f"firequalizer=gain='if(between(f,{int(fmin)},{int(fmax)}),0,{noise_reduction})'"
+    # Denoise with FFT and apply FIR Equalization around ROI boundaries using arbitrary frequency response
+    full_filter_chain = ",".join(["afftdn=tn=1", f"firequalizer=gain='if(between(f,{fmin},{fmax}),0,-INF)'"])    
 
+    # Append user-defined filters if any
     if audio_filter_chain is not None:
         full_filter_chain = f"{audio_filter_chain},{full_filter_chain}"
 
+    # Optional split for download
     if download:
         full_filter_chain += ",asplit=2[a1][a2]"
 

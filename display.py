@@ -22,7 +22,10 @@ def reducer(data, min_confidence, random_state):
         for item in data:
             conf = item.get('confidence')
             if conf < float(min_confidence):
-                item['prediction'] = 'Unknown'
+                if 'repertoire' in data[0]:
+                    item['repertoire'] = 'Unknown'
+                else:
+                    item['prediction'] = 'Unknown'
                 item['confidence'] = 0.0
     
     # Prepare labels
@@ -35,9 +38,10 @@ def reducer(data, min_confidence, random_state):
     X = np.array([item['embeddings'] for item in data])
     X = np.nan_to_num(X)
 
-    if X.shape[1] > 2:
-        labels_arr = np.asarray(labels).astype(str)
-        unique_labels = np.unique(labels_arr).astype(str).tolist()      
+    labels_arr = np.asarray(labels).astype(str)
+    unique_labels = np.unique(labels_arr).astype(str).tolist()
+
+    if X.shape[1] > 2:      
         pred = labels_arr != 'Unknown'
         
         # UMAP dimensionality reduction
@@ -127,7 +131,7 @@ def reducer(data, min_confidence, random_state):
         
     return X, labels_arr, unique_labels
 
-def run_bokeh_server(data, audio_filter_chain=None, min_confidence=0.90, noise_reduction=-20, frame_width=1400, frame_height=600, point_size=5, port=8080, random_state=2025):
+def run_bokeh_server(data, audio_filter_chain=None, min_confidence=0.90, frame_width=1400, frame_height=600, point_size=5, port=8080, random_state=2025):
         
     # Supervised dimensionality reduction with UMAP
     X, labels_arr, unique_labels = reducer(data, min_confidence=min_confidence, random_state=random_state)
@@ -225,7 +229,7 @@ def run_bokeh_server(data, audio_filter_chain=None, min_confidence=0.90, noise_r
                 cmd = [
                     "ffmpeg",
                     "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
-                    "-lavfi", "showspectrumpic=s=300x200:legend=enabled:color=channel",
+                    "-lavfi", "showspectrumpic=s=300x200:legend=enabled:color=channel:scale=log",
                     "-frames:v", "1", "-f", "image2", "pipe:1",
                 ]
                 proc = subprocess.run(cmd, input=wav_bytes, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
@@ -269,7 +273,7 @@ def run_bokeh_server(data, audio_filter_chain=None, min_confidence=0.90, noise_r
                     fmax = source.data['fmax'][idx]
                     rate = source.data['rate'][idx]
 
-                    _, outpath = extract_roi_audio([path, tmin, tmax, fmin, fmax, audio_filter_chain, noise_reduction, True, rate])
+                    _, outpath = extract_roi_audio([path, tmin, tmax, fmin, fmax, audio_filter_chain, True, rate])
                     saved.append(outpath)
 
                 except Exception as e:

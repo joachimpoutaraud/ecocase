@@ -14,7 +14,7 @@ warnings.filterwarnings("ignore")
 
 
 class EcoCASE(RecordingBuffer):
-    def __init__(self, path, rate=48000, fmin=1, fmax=15000, lat=None, lon=None, week_48=-1, audio_filter_chain=None, multiprocessing=True, verbose=True, random_state=2025):
+    def __init__(self, path, rate=48000, fmin=1, fmax=15000, lat=None, lon=None, week_48=-1, min_confidence=None, audio_filter_chain=None, multiprocessing=True, verbose=True, random_state=2025):
         
         self.rate = rate
         self.fmin = fmin
@@ -22,6 +22,7 @@ class EcoCASE(RecordingBuffer):
         self.lat = lat
         self.lon = lon
         self.week_48 = week_48
+        self.min_confidence = min_confidence
         self.multiprocessing = multiprocessing
         self.verbose = verbose
         self.random_state = random_state
@@ -44,8 +45,6 @@ class EcoCASE(RecordingBuffer):
             f"aresample=resampler=soxr:out_sample_rate={rate}",
             # Convert to mono
             f"aformat=channel_layouts=mono",
-            # Normalize dynamics
-            f"dynaudnorm=b=enabled",
         ])
     
 
@@ -82,15 +81,12 @@ class EcoCASE(RecordingBuffer):
         return rois
     
 
-    def segment_rois(self, rois, t_margin=0.2, f_margin=500, noise_reduction=-20, download=False, save_binary=None):
+    def segment_rois(self, rois, download=False, save_binary=None):
         """
         Segment region of interests (ROIs) from audio files and optionally save results as a .npy file.
         
         Parameters:
             rois (list): List of ROIs dictionaries.
-            t_margin (float): Time margin in seconds to add before and after each ROI.
-            f_margin (int): Frequency margin in Hz to add below and above each ROI.
-            noise_reduction (int): Noise reduction level in dB.
             download (bool): Whether to save the segmented ROIs as audio files.
             save_binary (str): Path to save the .npy results file. Default is None (no saving).
             
@@ -99,7 +95,7 @@ class EcoCASE(RecordingBuffer):
         """
 
         # Set arguments list
-        args_list = [(roi['path'], roi['tmin']-t_margin, roi['tmax']+t_margin, roi['fmin']-f_margin, roi['fmax']+f_margin, self.audio_filter_chain, noise_reduction, download, self.rate) for roi in rois]
+        args_list = [(roi['path'], roi['tmin'], roi['tmax'], roi['fmin'], roi['fmax'], self.audio_filter_chain, download, self.rate) for roi in rois]
 
         # Segment the region of interests (ROIs)
         self.rois = self._multiprocessing(extract_roi_audio, args_list, desc="Segmenting region of interests (ROIs)")
@@ -200,6 +196,17 @@ class EcoCASE(RecordingBuffer):
             results_dict (dict): Dictionary with frequency analysis results.
         """
 
+        # Filter out low-confidence predictions by marking them as "Unknown"
+        if self.min_confidence is not None:
+            for item in self.data:
+                conf = item.get('confidence')
+                if conf < float(self.min_confidence):
+                    if 'repertoire' in self.data[0]:
+                        item['repertoire'] = 'Unknown'
+                    else:
+                        item['prediction'] = 'Unknown'
+                    item['confidence'] = 0.0
+
         # Get unique detected species with counts
         if species is None:
             preds = np.array([item.get('prediction') for item in self.data])
@@ -239,13 +246,42 @@ class EcoCASE(RecordingBuffer):
         from sklearn.metrics import make_scorer
         from sklearn.model_selection import RandomizedSearchCV
 
+        # Filter out low-confidence predictions by marking them as "Unknown"
+        if self.min_confidence is not None:
+            for item in self.data:
+                conf = item.get('confidence')
+                if conf < float(self.min_confidence):
+                    if 'repertoire' in self.data[0]:
+                        item['repertoire'] = 'Unknown'
+                    else:
+                        item['prediction'] = 'Unknown'
+                    item['confidence'] = 0.0
+        
         # Filter embeddings with the selected species
         self.data = [d for d in self.data if isinstance(d, dict) and d.get('prediction', '').lower() == species.lower()]
+
+        # # Compute frequency analysis to filter by those bounds
+        # freq_stats = self.frequency_analysis(species=species)
+        # fmin_med = freq_stats[species].get("fmin_median")
+        # fmax_med = freq_stats[species].get("fmax_median")
+
+        # if fmin_med is not None and fmax_med is not None:
+        #     # Keep only entries whose fmin/fmax lie within the median boundaries
+        #     self.data = [
+        #         d for d in self.data
+        #         if isinstance(d, dict)
+        #         and d.get('fmin') is not None
+        #         and d.get('fmax') is not None
+        #         and d['fmin'] >= fmin_med
+        #         and d['fmax'] <= fmax_med
+        #     ]
+
+        # Get the embeddings
         embeddings = np.array([d['embeddings'] for d in self.data if d.get('embeddings') is not None])
 
         if embeddings.shape[1] > 2:
             # Apply UMAP dimensionality reduction
-            reducer = umap.UMAP(random_state=self.random_state)
+            reducer = umap.UMAP(random_state=self.random_state, metric='cosine')
             reduced_embeddings = reducer.fit_transform(embeddings)
         else:
             reduced_embeddings = embeddings
@@ -277,7 +313,8 @@ class EcoCASE(RecordingBuffer):
 
         if self.verbose:
             n_clusters = len(np.unique(best_labels[best_labels >= 0]))
-            print(f'Number of clusters found (excluding noise): {n_clusters} (best Parameters {random_search.best_params_})')
+            # print(f"Frequency analysis '{species}': {freq_stats[species]}")
+            print(f'Number of clusters found (excluding noise): {n_clusters} {random_search.best_params_}')
             print(f"DBCV score :{random_search.best_estimator_.relative_validity_}")
 
         # Update embeddings and add 'repertoire' key with label values
@@ -298,9 +335,9 @@ class EcoCASE(RecordingBuffer):
         return self.data
     
     
-    def display_clusters(self, min_confidence=0.90, noise_reduction=-20, frame_width=1400, frame_height=600, point_size=5, port=8080):
+    def display_clusters(self, frame_width=1400, frame_height=600, point_size=5, port=8080):
         # Display clusters in an interactive plot with Bokeh server
-        run_bokeh_server(self.data, self.audio_filter_chain, min_confidence, noise_reduction, frame_width, frame_height, point_size, port, self.random_state)
+        run_bokeh_server(self.data, self.audio_filter_chain, self.min_confidence, frame_width, frame_height, point_size, port, self.random_state)
 
 
     def _load_path(self, path, min_size=10*1024, audio_ext=(".wav", ".mp3", ".flac", ".aiff", ".ogg")):
@@ -401,22 +438,22 @@ class EcoCASE(RecordingBuffer):
 
 if __name__ == "__main__":
     # Initialize EcoCASE with a file path or folder path containing audio files
-    case = EcoCASE(path='data/SMA04635_20220318_182700.wav', multiprocessing=True, rate=48000, fmin=1, fmax=15000, lat=4.937, lon=-52.326)
+    case = EcoCASE(path='repertoire.npy', multiprocessing=True, rate=48000, fmin=1, fmax=15000, min_confidence=0.90)#, lat=4.937, lon=-52.326)
 
-    # Detect region of interests (ROIs) in the recording
-    contours = case.detect_rois(min_duration=0.5, max_duration=10.0, stretch_factor=1.0, display=False)
-    # Segment region of interests (ROIs) in the recording
-    rois = case.segment_rois(contours, noise_reduction=-60, save_binary='rois.npy')
-    # Extract embeddings and predict species with BirdNET
-    embeddings = case.birdnet_analysis(rois, embeddings=True, predict=True, save_binary='embeddings.npy')    
+    # # Detect region of interests (ROIs) in the recording
+    # contours = case.detect_rois(min_duration=0.5, max_duration=10.0, stretch_factor=1.0, display=False)
+    # # Segment region of interests (ROIs) in the recording
+    # rois = case.segment_rois(contours, save_binary='rois.npy')
+    # # Extract embeddings and predict species with BirdNET
+    # data = case.birdnet_analysis(rois, embeddings=True, predict=True, save_binary='data.npy')    
 
-    # # Analyze frequency range of the predicted species
-    # results = case.frequency_analysis(species='Chloris chloris_European Greenfinch') 
+    # # # Analyze frequency range of the predicted species
+    # # results = case.frequency_analysis(species='Chloris chloris_European Greenfinch')
     # # Analyze repertoire of the species
     # repertoire = case.repertoire_analysis(species='Chloris chloris_European Greenfinch', save_binary='repertoire.npy') # Chloris chloris_European Greenfinch, Turdus iliacus_Redwing, Alauda arvensis_Eurasian Skylark
     
     # Display ecological clusters in an interactive plot
-    case.display_clusters(min_confidence=0.90, port=8080)
+    case.display_clusters(port=8080)
 
     #TODO
     # 1) system to choose from the labels species list
