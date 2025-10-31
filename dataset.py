@@ -110,7 +110,8 @@ class XenoCanto():
                     # 'box:-5.681584,-71.740723,9.535749,-38.364258', # Geographical bounding box (min_lat, min_lon, max_lat, max_lon)
                     # Radius search easily made using bboxfinder.com (coordinate format:"Lat / Lng" + draw a circle with radius ~ 500km, and copy map)
                 ],
-                species_xc = ['chloris chloris'],
+                species_xc = ['turdus iliacus'], # List of species to query
+                api_key = '<YOUR_XENO_CANTO_API_KEY>',   # Xeno-Canto API key
                 num_files = None,
                 format_time = False,
                 format_date = False,
@@ -122,6 +123,7 @@ class XenoCanto():
 
         self.params_xc = params_xc
         self.species_xc = species_xc
+        self.api_key = api_key
         self.num_files = num_files
         self.format_time = format_time
         self.format_date = format_date 
@@ -176,6 +178,9 @@ class XenoCanto():
             for _, row in df_query.iterrows():
                 # Convert parameters to list
                 self.params_xc = row.tolist()
+                self.params_xc[0] = f'sp:"{self.params_xc[0]}%20{self.params_xc[1]}"'
+                del self.params_xc[1]
+
                 # Request data from Xeno-Canto
                 self.df = pd.concat([self.df, self.query()]) 
                 
@@ -227,13 +232,14 @@ class XenoCanto():
         page = 1
         
         while page < numPages + 1:
+
             try:
-                params_xc = '%20'.join(self.params_xc)
-                url = 'https://www.xeno-canto.org/api/2/recordings?query={0}&page={1}'.format(params_xc, page)        
+                params_xc = '+'.join(self.params_xc)
+                url = 'https://www.xeno-canto.org/api/3/recordings?query={0}&page={1}&key={2}'.format(params_xc, page, self.api_key)        
                 jsonPage = urllib.request.urlopen(url) 
             except UnicodeEncodeError:
                 params_xc = urllib.parse.quote(' '.join(self.params_xc), safe=':/')
-                url = 'https://www.xeno-canto.org/api/2/recordings?query={0}&page={1}'.format(params_xc, page)
+                url = 'https://www.xeno-canto.org/api/3/recordings?query={0}&page={1}&key={2}'.format(params_xc, page, self.api_key)
                 jsonPage = urllib.request.urlopen(url)
                 
             if self.verbose:
