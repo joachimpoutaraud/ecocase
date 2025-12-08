@@ -41,47 +41,45 @@ def reducer(data, min_confidence, random_state):
     labels_arr = np.asarray(labels).astype(str)
     unique_labels = np.unique(labels_arr).astype(str).tolist()
 
-    if X.shape[1] > 2:      
+    if X.shape[1] > 1:      
         pred = labels_arr != 'Unknown'
         
         # UMAP dimensionality reduction
         import umap
-        reducer = umap.UMAP(random_state=random_state, metric='cosine')
+        reducer = umap.UMAP(random_state=random_state)
         
         # # ParametricUMAP dimensionality reduction
         # from umap.parametric_umap import ParametricUMAP
         # from tensorflow import keras
         
         # n_components = 2
-        # dims = (X.shape[1],)
-
-        # # Build the autoencoder        
+        # dims = (embeddings.shape[1],)
         # encoder = keras.Sequential([
         #     keras.layers.Input(shape=dims),
         #     keras.layers.Flatten(),
+        #     keras.layers.Dense(units=512, activation="relu"),
+        #     keras.layers.BatchNormalization(),
+        #     keras.layers.Dropout(0.3),
         #     keras.layers.Dense(units=256, activation="relu"),
         #     keras.layers.BatchNormalization(),
         #     keras.layers.Dropout(0.3),
         #     keras.layers.Dense(units=128, activation="relu"),
         #     keras.layers.BatchNormalization(),
         #     keras.layers.Dropout(0.3),
-        #     keras.layers.Dense(units=32, activation="relu"),
-        #     keras.layers.BatchNormalization(),
-        #     keras.layers.Dropout(0.3),
         #     keras.layers.Dense(units=n_components, name="z")
         # ])
-        
+
         # decoder = keras.Sequential([
         #         keras.layers.Input(shape=(n_components,)),
-        #         keras.layers.BatchNormalization(),
-        #         keras.layers.Dropout(0.3),
-        #         keras.layers.Dense(units=32, activation="relu"),
         #         keras.layers.BatchNormalization(),
         #         keras.layers.Dropout(0.3),
         #         keras.layers.Dense(units=128, activation="relu"),
         #         keras.layers.BatchNormalization(),
         #         keras.layers.Dropout(0.3),
         #         keras.layers.Dense(units=256, activation="relu"),
+        #         keras.layers.BatchNormalization(),
+        #         keras.layers.Dropout(0.3),
+        #         keras.layers.Dense(units=512, activation="relu"),
         #         keras.layers.BatchNormalization(),
         #         keras.layers.Dropout(0.3),
         #         keras.layers.Dense(units=np.prod(dims), name="recon", activation=None),
@@ -96,17 +94,20 @@ def reducer(data, min_confidence, random_state):
         #         verbose=1,
         #     )
         # ]}
-        
+
         # reducer = ParametricUMAP(
         #                         encoder=encoder, 
         #                         decoder=decoder,
         #                         parametric_reconstruction=True,
+        #                         n_components=n_components, 
+        #                         metric=metric, 
+        #                         random_state=self.random_state, 
+        #                         verbose=self.verbose,
         #                         dims=dims, 
         #                         keras_fit_kwargs=keras_fit_kwargs,
-        #                         random_state=random_state
         #                         )
         
-        # reducer.n_training_epochs = 1            
+        # reducer.n_training_epochs = 1  
 
         y = np.full(labels_arr.shape, -1, dtype=int)
 
@@ -365,14 +366,12 @@ def run_bokeh_server(data, audio_filter_chain=None, min_confidence=0.90, frame_w
 
 # if __name__ == "__main__":
     
-#     data = np.load('embeddings.npy', allow_pickle=True)
+#     data = np.load('data.npy', allow_pickle=True)
 #     audio_filter_chain = ",".join([
 #             # Resample audio file
 #             f"aresample=resampler=soxr:out_sample_rate=48000",
 #             # Convert to mono
 #             f"aformat=channel_layouts=mono",
-#             # Normalize dynamics
-#             f"dynaudnorm=b=enabled",
 #         ])
     
 #     run_bokeh_server(data, audio_filter_chain, min_confidence=0.75, frame_width=1400, frame_height=600, point_size=5, port=8080, random_state=2025)

@@ -17,16 +17,21 @@ def get_duration(path):
     return duration
 
 
-def convert_audio_to_image(path, fmin=1, fmax=15000, audio_filter_chain=None, noise_profile=[0.0, 0.5], n_fft=512, hop_length=128, fps=50):
+def convert_audio_to_image(path, fmin=1, fmax=15000, audio_filter_chain=None, noise_floor='auto', noise_profile=[0.0, 0.5], n_fft=1024, pps=256):
 
     duration = get_duration(path)
     noise_start, noise_end = noise_profile[0], noise_profile[1]
     noise_profile_duration = noise_end - noise_start
 
+    if noise_floor == 'auto':
+        nf = "tn=1"
+    else:
+        nf = f"nf={noise_floor}"
+
     filter_complex = (
         (f"[0:a]{audio_filter_chain},dynaudnorm=b=enabled[af];"
          if audio_filter_chain
-         else "[0:a]dynaudnorm=b=enabled[af];"
+         else f"[0:a]dynaudnorm=b=enabled[af];"
         ) +
         
         # Split audio file in two
@@ -39,13 +44,14 @@ def convert_audio_to_image(path, fmin=1, fmax=15000, audio_filter_chain=None, no
 
         # Concatenate noise profile and denoise second audio split
         f"[a_formatted][a_main]concat=n=2:v=0:a=1[a2_with_noise];"
-        f"[a2_with_noise]asendcmd={noise_start} afftdn sn start,asendcmd={noise_end} afftdn sn end,afftdn=tn=1:tr=1[a2_denoised];"
+        f"[a2_with_noise]asendcmd={noise_start} afftdn sn start,asendcmd={noise_end} afftdn sn end,afftdn={nf}:tr=1[a2_denoised];"
 
         # Remove noise profile from second audio split
         f"[a2_denoised]atrim=start={noise_profile_duration},asetpts=PTS-STARTPTS[a_denoised];"
         
         # Convert audio to scaleogram image
-        f"[a_denoised]showcwt=s=1x{n_fft}:slide=scroll:pps={hop_length}:rate={fps}:deviation=10:min={fmin}:max={fmax},fps={fps},tile={int(fps * duration)}x1[transform]"
+        f"[a_denoised]showcwt=s=1x{n_fft}:slide=scroll:pps={pps}:rate={pps}:min={fmin}:max={fmax},fps={pps},tile={int(pps * duration)}x1[transform]"
+        # f"[a_denoised]showspectrum=s=1x{n_fft}:scale=lin:start={fmin}:stop={fmax}:fps={pps}:slide='scroll':overlap=1:limit=-20,fps={pps},tile={int(pps * duration)}x1[transform]"
     )
 
     # Create FFmpeg command

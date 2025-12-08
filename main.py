@@ -14,7 +14,7 @@ warnings.filterwarnings("ignore")
 
 
 class EcoCASE(RecordingBuffer):
-    def __init__(self, path, rate=48000, fmin=1, fmax=15000, lat=None, lon=None, week_48=-1, min_confidence=None, audio_filter_chain=None, multiprocessing=True, verbose=True, random_state=2025):
+    def __init__(self, path, rate=48000, fmin=1, fmax=15000, lat=None, lon=None, week_48=-1, min_confidence=0.25, audio_filter_chain=None, multiprocessing=True, verbose=True, random_state=2025):
         
         self.rate = rate
         self.fmin = fmin
@@ -48,8 +48,8 @@ class EcoCASE(RecordingBuffer):
         ])
     
 
-    def detect_rois(self, min_duration=0.5, max_duration=10.0, fscale="mel", noise_profile=[0.0, 0.5],
-                    n_fft=512, hop_length=128, fps=50, stretch_factor=1.0, display=False):
+    def detect_rois(self, min_duration=0.5, max_duration=10.0, fscale="mel", noise_floor="auto", noise_profile=[0.0, 0.5],
+                    n_fft=1024, pps=256, display=False):
         """
         Detect region of interests (ROIs) from audio files.
         
@@ -57,20 +57,19 @@ class EcoCASE(RecordingBuffer):
             min_duration (float): Minimum duration of ROIs in seconds.
             max_duration (float): Maximum duration of ROIs in seconds.
             fscale (str): Frequency scale for spectrogram ('mel', 'log', 'linear').
+            noise_floor (str): Set the noise floor in dB, allowed range is -80 to -20. Default is 'auto' which enables automatic noise floor tracking.
             noise_profile (list): Noise profile for denoising audio file with FFT [min, max] (seconds).
-            n_fft (int): Number of FFT components for spectrogram.
-            hop_length (int): Hop length for STFT.
-            fps (int): Frames per second for spectrogram.
-            stretch_factor (float): Time stretch factor for contour detection of syllables.
-            display (bool): Whether to display detected ROIs in a plot. Defqault is False.
+            n_fft (int): Number of FFT components for spectrogram. Default value is 1024.
+            pps (int): Number of pixels per second (pps) for spectrogram. Allowed range is from 1 to 1024. Default value is 256.
+            display (bool): Whether to display detected ROIs in a plot. Default is False.
             
         Returns:
             rois (list): List of detected ROIs dictionaries.
         """
         
         # Set arguments list
-        args_list = [(path, self.fmin, self.fmax, self.audio_filter_chain, noise_profile,
-                    n_fft, hop_length, fps, min_duration, max_duration, fscale, stretch_factor, display)
+        args_list = [(path, self.fmin, self.fmax, self.audio_filter_chain, noise_floor, noise_profile,
+                    n_fft, pps, min_duration, max_duration, fscale, display)
                     for path in self.path]
         
         # Detect the region of interests (ROIs)
@@ -185,6 +184,91 @@ class EcoCASE(RecordingBuffer):
         return self.data
 
 
+    # def train(self, species=None, latent_dim=128, epochs=100, dropout_rate=0.3, batch_size=64, save_binary=None):
+    #     import random
+    #     # Seed Python and NumPy RNGs before importing TensorFlow
+    #     random.seed(self.random_state)
+    #     np.random.seed(self.random_state)
+
+        # import tensorflow as tf
+        # from tensorflow import keras
+        # from tensorflow.keras.optimizers import Adam
+        # from tensorflow.keras.losses import CosineSimilarity
+        
+        # if species is not None:
+        #     # Filter embeddings with the selected species
+        #     self.data = [d for d in self.data if isinstance(d, dict) and d.get('prediction', '').lower() == species.lower()]
+
+        # # Get the embeddings
+        # X = np.array([d['embeddings'] for d in self.data if d.get('embeddings') is not None]).astype(np.float32)
+
+        # # Train an autoencoder to reduce to X dimensions
+        # tf.random.set_seed(self.random_state)
+        # keras_verbose = 1 if self.verbose else 0
+
+        # input_dim = X.shape[1]
+
+        # # Build a simple fully-connected autoencoder with a bottleneck of dimension `latent_dim`
+        # inputs = keras.Input(shape=(input_dim,))
+        # units1, units2 = 512, 256
+
+        # x = keras.layers.Dense(units1, use_bias=False)(inputs)
+        # x = keras.layers.Activation('relu')(x)
+        # x = keras.layers.LayerNormalization()(x)
+        # x = keras.layers.Dropout(dropout_rate)(x)
+
+        # x = keras.layers.Dense(units2, use_bias=False)(x)
+        # x = keras.layers.Activation('relu')(x)
+        # x = keras.layers.LayerNormalization()(x) 
+        # x = keras.layers.Dropout(dropout_rate)(x)
+
+        # latent = keras.layers.Dense(latent_dim, activation='linear', name='bottleneck')(x)
+        # latent = keras.layers.LayerNormalization()(latent)
+
+        # x = keras.layers.Dense(units2, use_bias=False)(latent)
+        # x = keras.layers.Activation('relu')(x)
+        # x = keras.layers.LayerNormalization()(x)
+        # x = keras.layers.Dropout(dropout_rate)(x)
+
+        # x = keras.layers.Dense(units1, use_bias=False)(x)
+        # x = keras.layers.Activation('relu')(x)
+        # x = keras.layers.LayerNormalization()(x)
+        # x = keras.layers.Dropout(dropout_rate)(x)
+
+        # outputs = keras.layers.Dense(input_dim, activation='linear')(x)
+        # autoencoder = keras.Model(inputs, outputs)
+        # encoder = keras.Model(inputs, autoencoder.get_layer('bottleneck').output)
+
+        # # Configure the model for training
+        # autoencoder.compile(optimizer=Adam(), loss=CosineSimilarity())
+
+        # # Train with early stopping
+        # es = keras.callbacks.EarlyStopping(monitor='loss', patience=10, restore_best_weights=True, verbose=keras_verbose)
+
+        # autoencoder.fit(
+        #                 X, X,
+        #                 epochs=epochs,
+        #                 batch_size=batch_size,
+        #                 validation_split=0.2 if X.shape[0] > 10 else 0.0,
+        #                 callbacks=[es],
+        #                 verbose=keras_verbose,
+        #                 shuffle=False
+        #                 )
+
+        # # Extract reduced X-dim embeddings from encoder bottleneck
+        # embeddings = encoder.predict(X)
+
+        # # Update embeddings
+        # for i, d in enumerate(self.data):
+        #     d['embeddings'] = embeddings[i]
+
+        # # Save data to a binary file in NumPy .npy format
+        # if save_binary is not None:
+        #     np.save(save_binary, self.data)
+
+        # return self.data
+
+
     def frequency_analysis(self, species=None):
         """
         Analyze frequency range of detected species in the ROIs.
@@ -238,13 +322,12 @@ class EcoCASE(RecordingBuffer):
             }
 
         return results_dict
-    
 
-    def repertoire_analysis(self, species, keep_noise=False, param_dist=None, n_iter_search=20, save_binary=None):
+
+    def repertoire_analysis(self, species, min_cluster_size=15, metric='cosine', keep_noise=False, save_binary=None):
         import umap
         import hdbscan
-        from sklearn.metrics import make_scorer
-        from sklearn.model_selection import RandomizedSearchCV
+        from sklearn.metrics import pairwise_distances
 
         # Filter out low-confidence predictions by marking them as "Unknown"
         if self.min_confidence is not None:
@@ -257,72 +340,134 @@ class EcoCASE(RecordingBuffer):
                         item['prediction'] = 'Unknown'
                     item['confidence'] = 0.0
         
+
+
+        # import random
+        # # Seed Python and NumPy RNGs before importing TensorFlow
+        # random.seed(self.random_state)
+        # np.random.seed(self.random_state)
+
+        # import tensorflow as tf
+        # from tensorflow import keras
+        # from tensorflow.keras.optimizers import Adam
+        # from tensorflow.keras.losses import CosineSimilarity
+
+        # # Filter embeddings with the selected species
+        # self.data = [d for d in self.data if isinstance(d, dict) and d.get('prediction', '').lower() == species.lower()]
+        # # Get the embeddings
+        # X = np.array([d['embeddings'] for d in self.data if d.get('embeddings') is not None]).astype(np.float32)
+
+        # # Train an autoencoder to reduce to X dimensions
+        # tf.random.set_seed(self.random_state)
+        # keras_verbose = 1 if self.verbose else 0
+
+        # input_dim = X.shape[1]
+
+        # # Build a simple fully-connected autoencoder with a bottleneck of dimension `latent_dim`
+        # inputs = keras.Input(shape=(input_dim,))
+        # units1, units2 = 128, 64
+        # latent_dim = 32
+
+        # dropout_rate = 0.3
+        # epochs = 100
+        # batch_size = 64
+
+        # x = keras.layers.Dense(units1, use_bias=False)(inputs)
+        # x = keras.layers.Activation('relu')(x)
+        # x = keras.layers.LayerNormalization()(x)
+        # x = keras.layers.Dropout(dropout_rate)(x)
+
+        # x = keras.layers.Dense(units2, use_bias=False)(x)
+        # x = keras.layers.Activation('relu')(x)
+        # x = keras.layers.LayerNormalization()(x) 
+        # x = keras.layers.Dropout(dropout_rate)(x)
+
+        # latent = keras.layers.Dense(latent_dim, activation='linear', name='bottleneck', kernel_regularizer=keras.regularizers.l1_l2(l1=1e-5, l2=1e-4))(x)
+        # latent = keras.layers.LayerNormalization()(latent)
+        # latent = keras.layers.Dropout(dropout_rate)(latent)
+
+        # x = keras.layers.Dense(units2, use_bias=False)(latent)
+        # x = keras.layers.Activation('relu')(x)
+        # x = keras.layers.LayerNormalization()(x)
+        # x = keras.layers.Dropout(dropout_rate)(x)
+
+        # x = keras.layers.Dense(units1, use_bias=False)(x)
+        # x = keras.layers.Activation('relu')(x)
+        # x = keras.layers.LayerNormalization()(x)
+        # x = keras.layers.Dropout(dropout_rate)(x)
+
+        # outputs = keras.layers.Dense(input_dim, activation='linear')(x)
+        # autoencoder = keras.Model(inputs, outputs)
+        # encoder = keras.Model(inputs, autoencoder.get_layer('bottleneck').output)
+
+        # # Configure the model for training
+        # autoencoder.compile(optimizer=Adam(), loss=CosineSimilarity())
+
+        # # Train with early stopping
+        # es = keras.callbacks.EarlyStopping(monitor='loss', patience=10, restore_best_weights=True, verbose=keras_verbose)
+
+        # autoencoder.fit(
+        #                 X, X,
+        #                 epochs=epochs,
+        #                 batch_size=batch_size,
+        #                 validation_split=0.2 if X.shape[0] > 10 else 0.0,
+        #                 callbacks=[es],
+        #                 verbose=keras_verbose,
+        #                 shuffle=False
+        #                 )
+
+        # # Extract reduced X-dim embeddings from encoder bottleneck
+        # emb = encoder.predict(X)
+
+
+
         # Filter embeddings with the selected species
         self.data = [d for d in self.data if isinstance(d, dict) and d.get('prediction', '').lower() == species.lower()]
-
-        # # Compute frequency analysis to filter by those bounds
-        # freq_stats = self.frequency_analysis(species=species)
-        # fmin_med = freq_stats[species].get("fmin_median")
-        # fmax_med = freq_stats[species].get("fmax_median")
-
-        # if fmin_med is not None and fmax_med is not None:
-        #     # Keep only entries whose fmin/fmax lie within the median boundaries
-        #     self.data = [
-        #         d for d in self.data
-        #         if isinstance(d, dict)
-        #         and d.get('fmin') is not None
-        #         and d.get('fmax') is not None
-        #         and d['fmin'] >= fmin_med
-        #         and d['fmax'] <= fmax_med
-        #     ]
+        # self.data = [d for d in self.data if isinstance(d, dict) and d.get('repertoire', '').lower() == 'Cluster 1'.lower()]
 
         # Get the embeddings
-        embeddings = np.array([d['embeddings'] for d in self.data if d.get('embeddings') is not None])
+        X = np.array([d['embeddings'] for d in self.data if d.get('embeddings') is not None])
 
-        if embeddings.shape[1] > 2:
-            # Apply UMAP dimensionality reduction
-            reducer = umap.UMAP(random_state=self.random_state, metric='cosine')
-            reduced_embeddings = reducer.fit_transform(embeddings)
-        else:
-            reduced_embeddings = embeddings
-            
-        # Fit HDBSCAN clustering algorithm
-        cluster = hdbscan.HDBSCAN(gen_min_span_tree=True).fit(reduced_embeddings)
+        best_score = -np.inf
+        best_labels = None
+        best_params = None
+        best_embeddings = None
 
-        # Specify parameters and distributions to sample from
-        if param_dist is None:
-            param_dist = {
-                        'min_samples': [5,10,15,20,25],
-                        'min_cluster_size': [5,10,15,20,25],  
-                        'metric': ['euclidean', 'manhattan'] 
-                        }
+        for c in [15]:
+            # UMAP dimensionality reduction
+            reducer = umap.UMAP(n_neighbors=min_cluster_size, n_components=100, metric=metric, random_state=self.random_state, verbose=self.verbose)
+            emb = reducer.fit_transform(X)
 
-        # Apply random search to estimate repertoire size
-        validity_scorer = make_scorer(hdbscan.validity.validity_index, greater_is_better=True)
-        random_search = RandomizedSearchCV(cluster,
-                                           param_distributions=param_dist,
-                                           n_iter=n_iter_search,
-                                           scoring=validity_scorer,
-                                           random_state=self.random_state)
-        # Fit random search algorithm
-        random_search.fit(reduced_embeddings)
+            # HDBSCAN clustering with DBCV score evaluation
+            precomputed_distances = pairwise_distances(emb, metric=metric).astype('float64')
+            model = hdbscan.HDBSCAN(min_cluster_size=min_cluster_size, metric='precomputed').fit(precomputed_distances)
+            score = hdbscan.validity.validity_index(precomputed_distances, model.labels_, metric='precomputed', d=emb.shape[1])
 
-        # Get best clusterer and labels
-        best_clusterer = random_search.best_estimator_
-        best_labels = best_clusterer.labels_
+            if np.isnan(score):
+                score = -np.inf
 
-        if self.verbose:
-            n_clusters = len(np.unique(best_labels[best_labels >= 0]))
-            # print(f"Frequency analysis '{species}': {freq_stats[species]}")
-            print(f'Number of clusters found (excluding noise): {n_clusters} {random_search.best_params_}')
-            print(f"DBCV score :{random_search.best_estimator_.relative_validity_}")
+            if score > best_score:
+                best_score = score
+                best_labels = model.labels_
+                best_embeddings = emb
+                best_params = {'min_cluster_size': min_cluster_size, 'metric': metric}
+
+        # expose chosen results to the rest of the method
+        embeddings = best_embeddings
+        best_score = float(best_score)
 
         # Update embeddings and add 'repertoire' key with label values
         for i, d in enumerate(self.data):
-            d['embeddings'] = reduced_embeddings[i]
+            # store the reduced vector (UMAP) rather than a row of the distance matrix
+            d['embeddings'] = embeddings[i]
             if i < len(best_labels):
                 label = best_labels[i]
                 d['repertoire'] = f"Cluster {label}" if label != -1 else "Noise"
+
+        if self.verbose:
+            n_clusters = len(np.unique(best_labels[best_labels >= 0]))
+            print(f'Number of clusters found (excluding noise): {n_clusters} {best_params}')
+            print(f"DBCV score :{best_score}")
 
         if keep_noise is not True:
             # Remove all entries labeled as "Noise"
@@ -408,6 +553,7 @@ class EcoCASE(RecordingBuffer):
             list: List of species names.    
         """
         from birdnetlib.species import SpeciesList
+
         self.species_class = SpeciesList()
         return self.species_class.return_list_for_analyzer(lat=lat, lon=lon, week_48=week_48, threshold=0.03)
             
@@ -438,22 +584,23 @@ class EcoCASE(RecordingBuffer):
 
 if __name__ == "__main__":
     # Initialize EcoCASE with a file path or folder path containing audio files
-    case = EcoCASE(path='repertoire.npy', multiprocessing=True, rate=48000, fmin=1, fmax=15000, min_confidence=0.90)#, lat=4.937, lon=-52.326)
+    case = EcoCASE(path='out.wav', multiprocessing=True, rate=48000, fmin=1, fmax=15000, min_confidence=0.25, lat=4.937, lon=-52.326)
 
-    # # Detect region of interests (ROIs) in the recording
-    # contours = case.detect_rois(min_duration=0.5, max_duration=10.0, stretch_factor=1.0, display=False)
-    # # Segment region of interests (ROIs) in the recording
-    # rois = case.segment_rois(contours, save_binary='rois.npy')
-    # # Extract embeddings and predict species with BirdNET
-    # data = case.birdnet_analysis(rois, embeddings=True, predict=True, save_binary='data.npy')    
+    # Detect region of interests (ROIs) in the recording
+    contours = case.detect_rois(min_duration=0.2, max_duration=10.0, display=True)
+    # Segment region of interests (ROIs) in the recording
+    rois = case.segment_rois(contours)#, save_binary='rois.npy')
+    # Extract embeddings and predict species with BirdNET
+    data = case.birdnet_analysis(rois, embeddings=True, predict=True, save_binary='data.npy')   
 
-    # # # Analyze frequency range of the predicted species
-    # # results = case.frequency_analysis(species='Chloris chloris_European Greenfinch')
+    # Analyze frequency range of the predicted species
+    results = case.frequency_analysis()
     # # Analyze repertoire of the species
-    # repertoire = case.repertoire_analysis(species='Chloris chloris_European Greenfinch', save_binary='repertoire.npy') # Chloris chloris_European Greenfinch, Turdus iliacus_Redwing, Alauda arvensis_Eurasian Skylark
+    # repertoire = case.repertoire_analysis(species='Turdus iliacus_Redwing')#, save_binary='repertoire.npy') # Chloris chloris_European Greenfinch, Turdus iliacus_Redwing, Alauda arvensis_Eurasian Skylark
     
     # Display ecological clusters in an interactive plot
     case.display_clusters(port=8080)
 
     #TODO
-    # 1) system to choose from the labels species list
+    # 1) check best DBCV score
+    # 2) system to choose from the labels species list

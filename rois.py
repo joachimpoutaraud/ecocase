@@ -83,28 +83,25 @@ def extract_roi_audio(args):
 
 
 def extract_roi_contours(args):
-    audio_path, fmin, fmax, audio_filter_chain, noise_profile, n_fft, hop_length, fps, min_duration, max_duration, fscale, stretch_factor, display = args
+    audio_path, fmin, fmax, audio_filter_chain, noise_floor, noise_profile, n_fft, pps, min_duration, max_duration, fscale, display = args
 
     try:
-        image, height, width = convert_audio_to_image(audio_path, fmin, fmax, audio_filter_chain, noise_profile, n_fft, hop_length, fps)
+        image, height, width = convert_audio_to_image(audio_path, fmin, fmax, audio_filter_chain, noise_floor, noise_profile, n_fft, pps)
         converted_image, px_to_freq = convert_pixel_to_frequency(image, fmin, fmax, height, fscale)
 
-        # Stretch converted image in time (x axis) for contour detection
-        stretched_width = int(round(width * stretch_factor))
-        # Resize converted image using linear interpolation
-        stretched_image = cv2.resize(converted_image, (stretched_width, height), interpolation=cv2.INTER_LINEAR)
-
-        # Process the stretched image to find contours
-        filtered = cv2.bilateralFilter(stretched_image, d=9, sigmaColor=75, sigmaSpace=75)
-        blurred = cv2.GaussianBlur(filtered, (7, 7), 0)
+        kernel_dim, border_thickness = 5, 5
+        # Replaces each pixel's value with a weighted average of its neighbors
+        filtered = cv2.bilateralFilter(converted_image, d=kernel_dim, sigmaColor=75, sigmaSpace=75)
+        # Apply Gaussian blur to reduce noise and improve thresholding
+        blurred = cv2.GaussianBlur(filtered, (kernel_dim, kernel_dim), 0)
+        # Perform automatic image thresholding with Otsu's method
         _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-        # Create border mask on the stretched image (scale border thickness with stretch if desired)
-        border_thickness = int(max(1, round(5 * stretch_factor)))
+        # Remove border artifacts
         border_mask = np.ones_like(thresh, dtype=np.uint8) * 255
         border_mask[border_thickness:-border_thickness, border_thickness:-border_thickness] = 0
         processed_image = cv2.bitwise_and(thresh, cv2.bitwise_not(border_mask))
-        # Find contours in the processed image
+        # Find contours in the binary image
         contours, _ = cv2.findContours(processed_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         boxes = []
@@ -112,18 +109,8 @@ def extract_roi_contours(args):
             if cnt is None or len(cnt) == 0:
                 continue
 
-            x_s, y, w_s, h = cv2.boundingRect(cnt.astype(np.int32))
-
-            # Scale x and w back to original image coordinates
-            x = int(round(x_s / stretch_factor))
-            w = int(round(w_s / stretch_factor))
-            # Clamp values to original image bounds
-            x = max(0, min(x, width - 1))
-            w = max(0, min(w, width - x))
-            y = max(0, min(y, height - 1))
-            h = max(0, min(h, height - y))
-
-            duration_roi = w / fps
+            x, y, w, h = cv2.boundingRect(cnt.astype(np.int32))
+            duration_roi = w / pps
 
             if duration_roi < min_duration or (max_duration is not None and duration_roi > max_duration):
                 continue
@@ -134,8 +121,8 @@ def extract_roi_contours(args):
 
         rois = []
         for x1, y1, x2, y2 in boxes:
-            tmin = x1 / fps
-            tmax = x2 / fps
+            tmin = x1 / pps
+            tmax = x2 / pps
             roi_fmin = px_to_freq[min(int(y2), height - 1)]
             roi_fmax = px_to_freq[max(int(y1), 0)]
 
@@ -159,7 +146,7 @@ def extract_roi_contours(args):
             # Convert x-axis from pixels to time (seconds)
             num_ticks = 10
             tick_pos = np.linspace(0, width, num=num_ticks)
-            tick_labels = [f"{(p / fps):.2f}" for p in tick_pos]
+            tick_labels = [f"{(p / pps):.2f}" for p in tick_pos]
             ax.set_xticks(tick_pos)
             ax.set_xticklabels(tick_labels)
             ax.set_xlabel("Time (s)")
