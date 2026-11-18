@@ -1,4 +1,4 @@
-# Ecological Clustering with Analysis of Sound Events (ECOCASE)
+# Ecological Clustering with Analysis of Sound Events (EcoCASE)
 
 ## Requirements
 
